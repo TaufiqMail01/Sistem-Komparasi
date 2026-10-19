@@ -28,8 +28,7 @@ export default function App() {
   const [filter, setFilter] = useState('ALL');
   const [nameSearchFilter, setNameSearchFilter] = useState('');
   const [selectedRowDetail, setSelectedRowDetail] = useState(null);
-  
-  const [selectedRowIds, setSelectedRowIds] = useState([]); // State untuk menyimpan ID baris yang dicentang
+  const [selectedRowIds, setSelectedRowIds] = useState([]);
 
   const readFileData = (file) => {
     return new Promise((resolve, reject) => {
@@ -92,13 +91,17 @@ export default function App() {
     setSelectedRowIds([]);
   };
 
+  // Mengambil header sekaligus menyaring kolom sampah bawaan SheetJS seperti __EMPTY
   const commonHeaders = useMemo(() => {
     if (!file1 || !file2) return [];
     const data1 = file1.sheetsData[sheet1] || [];
     const data2 = file2.sheetsData[sheet2] || [];
     const h1 = data1.length > 0 ? Object.keys(data1[0]) : [];
     const h2 = data2.length > 0 ? Object.keys(data2[0]) : [];
-    return Array.from(new Set([...h1, ...h2]));
+    const merged = Array.from(new Set([...h1, ...h2]));
+    
+    // Filter out __EMPTY columns
+    return merged.filter(col => !col.startsWith('__EMPTY'));
   }, [file1, file2, sheet1, sheet2]);
 
   const filteredPkHeaders = useMemo(() => {
@@ -218,10 +221,16 @@ export default function App() {
 
     const enrichRow = (row) => {
       if (!row) return null;
-      const newRow = { ...row };
+      const newRow = {};
+      // Hanya ambil kolom yang valid (bukan __EMPTY)
+      Object.keys(row).forEach(k => {
+        if (!k.startsWith('__EMPTY')) {
+          newRow[k] = row[k];
+        }
+      });
       if (enableFormula && formulaExpr.trim()) {
-        const originalCols = Object.keys(row);
-        newRow["Hasil_Formula"] = evaluateFormula(row, formulaExpr, originalCols);
+        const originalCols = Object.keys(newRow);
+        newRow["Hasil_Formula"] = evaluateFormula(newRow, formulaExpr, originalCols);
       }
       return newRow;
     };
@@ -360,14 +369,12 @@ export default function App() {
     return res;
   }, [comparisonResult, filter, nameSearchFilter]);
 
-  // Fungsi toggle ceklis per baris
   const toggleRowSelection = (id) => {
     setSelectedRowIds(prev => 
       prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
     );
   };
 
-  // Fungsi pilih semua baris yang sedang tampil di layar
   const toggleSelectAll = () => {
     const allFilteredIds = filteredResults.map(r => r.id);
     const isAllSelected = allFilteredIds.every(id => selectedRowIds.includes(id));
@@ -380,7 +387,6 @@ export default function App() {
     }
   };
 
-  // Fungsi Ekspor Excel (Jika ada yang dicentang, ekspor yang dicentang saja. Jika tidak ada, ekspor semua hasil filter)
   const exportToExcel = () => {
     if (!comparisonResult) return;
     
@@ -561,7 +567,7 @@ export default function App() {
                   })
                 )}
               </div>
-              <p className="text-[11px] text-slate-400">Baris kosong dengan Primary Key blank otomatis diabaikan.</p>
+              <p className="text-[11px] text-slate-400">Kolom sampah `__EMPTY` otomatis disaring dan disembunyikan.</p>
             </div>
 
             <div className="space-y-4 md:col-span-1">
@@ -593,9 +599,9 @@ export default function App() {
 
             <div className="space-y-1.5 md:col-span-1 bg-emerald-50/50 border border-emerald-200/60 p-4 rounded-xl flex flex-col justify-between">
               <div>
-                <span className="text-xs font-bold text-emerald-900 block mb-1">Fitur Ceklis Interaktif:</span>
+                <span className="text-xs font-bold text-emerald-900 block mb-1">Penyaringan Kolom Kosong:</span>
                 <p className="text-[11px] text-emerald-800 leading-relaxed">
-                  Kini Anda dapat mencentang baris tertentu pada tabel hasil komparasi untuk mengekspor data pilihan secara spesifik.
+                  Sistem kini secara otomatis mengabaikan kolom tidak bernama (`__EMPTY`) agar tampilan tabel dan hasil ekspor Excel bersih.
                 </p>
               </div>
               <div className="pt-2 text-[11px] font-semibold text-emerald-950 truncate">
