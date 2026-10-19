@@ -355,7 +355,7 @@ export default function App() {
                   <span className="px-2 py-0.5 text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30 rounded-full uppercase tracking-wider">
                     Universal Excel Reconciliation
                   </span>
-                  <span className="text-xs text-slate-400 hidden sm:inline">| Skripsi Program Science (Kode 156)</span>
+                  <span className="text-xs text-slate-400 hidden sm:inline"></span>
                 </div>
                 <h1 className="text-lg md:text-xl font-bold tracking-tight text-white">
                   Sistem Komparasi & Rekonsiliasi Data Excel Universal
