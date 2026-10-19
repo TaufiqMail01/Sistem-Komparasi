@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import { 
   Upload, FileSpreadsheet, ArrowRightLeft, Download, 
   Settings, Key, Sliders, Layers, CheckCircle, AlertTriangle, 
-  PlusCircle, MinusCircle, Eye, CheckCircle2, AlertCircle, FilePlus, FileMinus, X, Calculator, Plus, RotateCcw, Database, Type, Binary
+  PlusCircle, MinusCircle, Eye, CheckCircle2, AlertCircle, FilePlus, FileMinus, X, Calculator, Plus, RotateCcw, Database, Type, Binary, CheckSquare, Square, Search
 } from 'lucide-react';
 
 export default function App() {
@@ -14,13 +14,14 @@ export default function App() {
   const [sheet2, setSheet2] = useState('');
 
   const [config, setConfig] = useState({
-    primaryKey: '',
+    primaryKeys: [],
     ignoreCase: true,
     trimWhitespace: true,
     numericTolerance: 0.001,
     selectedColumns: []
   });
 
+  const [pkSearchQuery, setPkSearchQuery] = useState(''); // State untuk kotak pencarian Primary Key
   const [enableFormula, setEnableFormula] = useState(false);
   const [formulaExpr, setFormulaExpr] = useState('');
 
@@ -80,6 +81,8 @@ export default function App() {
     setSheet2('');
     setFormulaExpr('');
     setEnableFormula(false);
+    setConfig(prev => ({ ...prev, primaryKeys: [] }));
+    setPkSearchQuery('');
   };
 
   const commonHeaders = useMemo(() => {
@@ -90,6 +93,23 @@ export default function App() {
     const h2 = data2.length > 0 ? Object.keys(data2[0]) : [];
     return Array.from(new Set([...h1, ...h2]));
   }, [file1, file2, sheet1, sheet2]);
+
+  // Filter daftar kolom berdasarkan teks pencarian Primary Key
+  const filteredPkHeaders = useMemo(() => {
+    if (!pkSearchQuery.trim()) return commonHeaders;
+    return commonHeaders.filter(col => col.toLowerCase().includes(pkSearchQuery.toLowerCase()));
+  }, [commonHeaders, pkSearchQuery]);
+
+  const togglePrimaryKey = (col) => {
+    setConfig(prev => {
+      const exists = prev.primaryKeys.includes(col);
+      if (exists) {
+        return { ...prev, primaryKeys: prev.primaryKeys.filter(item => item !== col) };
+      } else {
+        return { ...prev, primaryKeys: [...prev.primaryKeys, col] };
+      }
+    });
+  };
 
   const insertColumnTagToFormula = (col) => {
     setFormulaExpr(prev => prev + `[${col}]`);
@@ -111,13 +131,11 @@ export default function App() {
     }
   };
 
-  // Format universal untuk Rupiah, Pajak/Keuangan, BPJS, Tanggal, dan Teks
   const formatCellValue = (headerName, val) => {
     if (val === null || val === undefined || val === "") return "-";
     
     const lowerHeader = headerName.toLowerCase();
     
-    // Deteksi komprehensif untuk data keuangan / nominal / gaji / pajak / bpjs
     const currencyKeywords = [
       'gaji', 'tunjangan', 'potongan', 'bonus', 'insentif', 'lembur', 'thr', 
       'bruto', 'thp', 'total', 'bayar', 'umk', 'penalty', 'bpjs', 'kompensasi', 
@@ -129,7 +147,6 @@ export default function App() {
       return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Number(val));
     }
 
-    // Deteksi format tanggal (dd-mm-yyyy)
     const dateKeywords = ['tanggal', 'date', 'tgl', 'start', 'end', 'join', 'expired', 'lahir'];
     const isDateHeader = dateKeywords.some(keyword => lowerHeader.includes(keyword));
 
@@ -155,7 +172,7 @@ export default function App() {
 
     const data1 = file1.sheetsData[sheet1] || [];
     const data2 = file2.sheetsData[sheet2] || [];
-    const { primaryKey, ignoreCase, trimWhitespace, numericTolerance, selectedColumns } = config;
+    const { primaryKeys, ignoreCase, trimWhitespace, numericTolerance, selectedColumns } = config;
 
     const normalizeVal = (val) => {
       if (val === null || val === undefined) return "";
@@ -163,6 +180,11 @@ export default function App() {
       if (trimWhitespace) s = s.trim();
       if (ignoreCase) s = s.toLowerCase();
       return s;
+    };
+
+    const getRowKeyString = (row) => {
+      if (!primaryKeys || primaryKeys.length === 0) return null;
+      return primaryKeys.map(k => normalizeVal(row[k])).join(' | ');
     };
 
     const areValuesEqual = (val1, val2) => {
@@ -199,30 +221,30 @@ export default function App() {
     const enrichedData1 = data1.map(enrichRow);
     const enrichedData2 = data2.map(enrichRow);
 
-    if (primaryKey && primaryKey !== '__INDEX__') {
+    if (primaryKeys && primaryKeys.length > 0) {
       const map2 = new Map();
       enrichedData2.forEach(row => {
-        const keyVal = normalizeVal(row[primaryKey]);
-        if (keyVal) map2.set(keyVal, row);
+        const compositeKey = getRowKeyString(row);
+        if (compositeKey) map2.set(compositeKey, row);
       });
 
       const processedKeysIn2 = new Set();
 
       enrichedData1.forEach((row1, idx) => {
-        const keyVal = normalizeVal(row1[primaryKey]);
-        const row2 = map2.get(keyVal);
+        const compositeKey = getRowKeyString(row1);
+        const row2 = compositeKey ? map2.get(compositeKey) : null;
 
         if (!row2) {
           results.push({
             id: `row-del-${idx}`,
-            key: row1[primaryKey] !== undefined ? String(row1[primaryKey]) : `Baris ${idx + 1}`,
+            key: compositeKey || `Baris ${idx + 1}`,
             status: 'DELETED',
             diffCount: activeHeaders.length,
             row1, row2: null, diffs: {}
           });
           counts.deleted++;
         } else {
-          processedKeysIn2.add(keyVal);
+          processedKeysIn2.add(compositeKey);
           let diffCount = 0;
           const diffs = {};
 
@@ -240,7 +262,7 @@ export default function App() {
 
           results.push({
             id: `row-mod-${idx}`,
-            key: row1[primaryKey] !== undefined ? String(row1[primaryKey]) : `Baris ${idx + 1}`,
+            key: compositeKey,
             status,
             diffCount,
             row1, row2, diffs
@@ -249,11 +271,11 @@ export default function App() {
       });
 
       enrichedData2.forEach((row2, idx) => {
-        const keyVal = normalizeVal(row2[primaryKey]);
-        if (!processedKeysIn2.has(keyVal)) {
+        const compositeKey = getRowKeyString(row2);
+        if (compositeKey && !processedKeysIn2.has(compositeKey)) {
           results.push({
             id: `row-add-${idx}`,
-            key: row2[primaryKey] !== undefined ? String(row2[primaryKey]) : `Baris ${idx + 1}`,
+            key: compositeKey,
             status: 'ADDED',
             diffCount: activeHeaders.length,
             row1: null, row2, diffs: {}
@@ -320,7 +342,7 @@ export default function App() {
     const exportData = filteredResults.map(item => {
       const row = {
         'Status': item.status,
-        'Kunci / Identifier': item.key,
+        'Composite Primary Key': item.key,
         'Jumlah Beda Kolom': item.diffCount
       };
       comparisonResult.headers.forEach(h => {
@@ -432,56 +454,96 @@ export default function App() {
           </div>
         </section>
 
+        {/* Section 2: Multi Primary Key Selection with Search & Parameters */}
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-5">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
               <Sliders className="w-5 h-5 text-indigo-600" />
-              2. Pengaturan Parameter Komparasi & Formula Engine
+              2. Pengaturan Parameter Komparasi & Composite Primary Key
             </h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            <div className="space-y-1.5">
+            <div className="space-y-2 md:col-span-1 flex flex-col">
               <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
                 <Key className="w-3.5 h-3.5 text-amber-500" />
-                Kolom Kunci Utama (Primary Key):
+                Pilih Kolom Kunci Utama (Multi-Select):
               </label>
-              <select 
-                value={config.primaryKey} 
-                onChange={(e) => setConfig({ ...config, primaryKey: e.target.value })} 
-                disabled={!file1 || !file2}
-                className="w-full bg-slate-50 text-xs font-medium text-slate-800 rounded-xl border border-slate-300 px-3 py-2 disabled:opacity-50"
-              >
-                <option value="">-- Pilih Kolom ID Unik (Contoh: NRK / NIK) --</option>
-                {commonHeaders.map(col => <option key={col} value={col}>{col}</option>)}
-              </select>
-              <p className="text-[11px] text-slate-400">Pilih kolom ID unik agar baris dicocokkan secara akurat.</p>
+
+              {/* Kotak Pencarian Kolom Primary Key */}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                <input 
+                  type="text" 
+                  placeholder="Cari nama kolom..." 
+                  value={pkSearchQuery}
+                  onChange={(e) => setPkSearchQuery(e.target.value)}
+                  disabled={!file1 || !file2}
+                  className="w-full bg-slate-50 text-xs text-slate-800 rounded-xl border border-slate-300 pl-8 pr-3 py-1.5 disabled:opacity-50"
+                />
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 h-36 overflow-y-auto space-y-1.5">
+                {!file1 || !file2 ? (
+                  <p className="text-[11px] text-slate-400 italic">Unggah kedua file terlebih dahulu.</p>
+                ) : filteredPkHeaders.length === 0 ? (
+                  <p className="text-[11px] text-slate-400 italic">Kolom tidak ditemukan.</p>
+                ) : (
+                  filteredPkHeaders.map(col => {
+                    const isSelected = config.primaryKeys.includes(col);
+                    return (
+                      <div 
+                        key={col} 
+                        onClick={() => togglePrimaryKey(col)}
+                        className={`flex items-center justify-between p-2 rounded-lg cursor-pointer text-xs transition-colors ${isSelected ? 'bg-indigo-50 border border-indigo-200 text-indigo-900 font-semibold' : 'hover:bg-slate-100 text-slate-700'}`}
+                      >
+                        <span className="truncate">{col}</span>
+                        {isSelected ? <CheckSquare className="w-4 h-4 text-indigo-600 flex-shrink-0 ml-2" /> : <Square className="w-4 h-4 text-slate-300 flex-shrink-0 ml-2" />}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+              <p className="text-[11px] text-slate-400">Centang 1 atau beberapa kolom unik.</p>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
-                <Type className="w-3.5 h-3.5 text-indigo-500" />
-                Aturan Pemrosesan Teks:
-              </label>
-              <div className="space-y-2 pt-0.5">
-                <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                  <input type="checkbox" checked={config.ignoreCase} onChange={(e) => setConfig({ ...config, ignoreCase: e.target.checked })} className="w-4 h-4 text-indigo-600 rounded border-slate-300" />
-                  <span>Abaikan Kapitalisasi (Case-Insensitive)</span>
+            <div className="space-y-4 md:col-span-1">
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <Type className="w-3.5 h-3.5 text-indigo-500" />
+                  Aturan Pemrosesan Teks:
                 </label>
-                <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                  <input type="checkbox" checked={config.trimWhitespace} onChange={(e) => setConfig({ ...config, trimWhitespace: e.target.checked })} className="w-4 h-4 text-indigo-600 rounded border-slate-300" />
-                  <span>Abaikan Spasi Awal & Akhir</span>
+                <div className="space-y-2 pt-0.5">
+                  <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                    <input type="checkbox" checked={config.ignoreCase} onChange={(e) => setConfig({ ...config, ignoreCase: e.target.checked })} className="w-4 h-4 text-indigo-600 rounded border-slate-300" />
+                    <span>Abaikan Kapitalisasi (Case-Insensitive)</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                    <input type="checkbox" checked={config.trimWhitespace} onChange={(e) => setConfig({ ...config, trimWhitespace: e.target.checked })} className="w-4 h-4 text-indigo-600 rounded border-slate-300" />
+                    <span>Abaikan Spasi Awal & Akhir</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <Calculator className="w-3.5 h-3.5 text-emerald-500" />
+                  Toleransi Selisih Angka:
                 </label>
+                <input type="number" value={config.numericTolerance} step="0.001" min="0" onChange={(e) => setConfig({ ...config, numericTolerance: parseFloat(e.target.value) || 0 })} className="w-full bg-slate-50 text-xs text-slate-800 rounded-xl border border-slate-300 px-3 py-2" />
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
-                <Calculator className="w-3.5 h-3.5 text-emerald-500" />
-                Toleransi Selisih Angka:
-              </label>
-              <input type="number" value={config.numericTolerance} step="0.001" min="0" onChange={(e) => setConfig({ ...config, numericTolerance: parseFloat(e.target.value) || 0 })} className="w-full bg-slate-50 text-xs text-slate-800 rounded-xl border border-slate-300 px-3 py-2" />
-              <p className="text-[11px] text-slate-400">Selisih nominal di bawah nilai ini diabaikan.</p>
+            <div className="space-y-1.5 md:col-span-1 bg-amber-50/50 border border-amber-200/60 p-4 rounded-xl flex flex-col justify-between">
+              <div>
+                <span className="text-xs font-bold text-amber-900 block mb-1">Info Composite Key:</span>
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  Gunakan kotak pencarian di atas untuk menemukan kolom kunci dengan cepat jika file Excel Anda memiliki banyak kolom.
+                </p>
+              </div>
+              <div className="pt-2 text-[11px] font-semibold text-amber-900 truncate">
+                Terpilih: {config.primaryKeys.length > 0 ? config.primaryKeys.join(' + ') : 'Belum ada (Default Baris)'}
+              </div>
             </div>
           </div>
 
@@ -499,7 +561,7 @@ export default function App() {
 
             {enableFormula && (
               <div className="space-y-2.5 animate-fade-in">
-                <input type="text" placeholder="Contoh: [Gaji_Pokok] + [Tunjangan] - [BPJS_Kesehatan] - [Pph21]" value={formulaExpr} onChange={(e) => setFormulaExpr(e.target.value)} className="w-full bg-white text-xs font-mono text-slate-800 rounded-xl border border-indigo-200 px-3.5 py-2.5 shadow-sm" />
+                <input type="text" placeholder="Contoh: [Gaji_Pokok] + [Tunjangan] - [BPJS_Kesehatan]" value={formulaExpr} onChange={(e) => setFormulaExpr(e.target.value)} className="w-full bg-white text-xs font-mono text-slate-800 rounded-xl border border-indigo-200 px-3.5 py-2.5 shadow-sm" />
                 <div>
                   <span className="text-[11px] font-semibold text-slate-600 block mb-1">Klik nama kolom untuk menyisipkan ke rumus:</span>
                   <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
@@ -606,7 +668,7 @@ export default function App() {
                     <tr>
                       <th className="p-3 w-12 text-center">Aksi</th>
                       <th className="p-3 w-28">Status</th>
-                      <th className="p-3 w-36">Kunci Baris</th>
+                      <th className="p-3 w-48">Composite Key</th>
                       {comparisonResult.headers.slice(0, 3).map(h => (
                         <th key={h} className="p-3 min-w-[140px]">{h}</th>
                       ))}
@@ -619,7 +681,7 @@ export default function App() {
                     {filteredResults.length === 0 ? (
                       <tr>
                         <td colSpan={comparisonResult.headers.length + 3} className="p-8 text-center text-slate-400">
-                          Tidak ada data yang cocok dengan filter. Pastikan Primary Key sudah dipilih dengan benar!
+                          Tidak ada data yang cocok dengan filter. Pastikan Primary Key sudah dicentang dengan benar!
                         </td>
                       </tr>
                     ) : (
@@ -640,7 +702,7 @@ export default function App() {
                             {row.status === 'ADDED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-100 text-blue-800"><FilePlus className="w-3.5 h-3.5" /> Baru</span>}
                             {row.status === 'DELETED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-100 text-rose-800"><FileMinus className="w-3.5 h-3.5" /> Hapus</span>}
                           </td>
-                          <td className="p-3 font-medium text-slate-800">{row.key}</td>
+                          <td className="p-3 font-mono font-medium text-slate-800">{row.key}</td>
                           {comparisonResult.headers.slice(0, 3).map(h => {
                             const diff = row.diffs[h];
                             const isDiff = diff && !diff.isEqual;
@@ -680,7 +742,7 @@ export default function App() {
                 </div>
                 <div>
                   <h3 className="font-bold text-base">Detail Audit Baris / Record</h3>
-                  <p className="text-xs text-slate-300">Identifier (Primary Key): <span className="font-mono text-amber-400 font-bold">{selectedRowDetail.key}</span></p>
+                  <p className="text-xs text-slate-300">Composite Primary Key: <span className="font-mono text-amber-400 font-bold">{selectedRowDetail.key}</span></p>
                 </div>
               </div>
               <button onClick={() => setSelectedRowDetail(null)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 hover:text-white transition-colors">
@@ -690,7 +752,7 @@ export default function App() {
             
             <div className="p-6 overflow-y-auto space-y-4 flex-1 bg-slate-50/50">
               <div className="bg-amber-50/80 border border-amber-200/80 p-3.5 rounded-2xl text-xs text-amber-900 flex items-center justify-between shadow-xs">
-                <span className="font-medium">Perbandingan atribut data secara presisi berdasarkan kunci utama (Primary Key).</span>
+                <span className="font-medium">Perbandingan atribut data secara presisi berdasarkan kombinasi Composite Primary Key.</span>
                 <span className="font-bold bg-amber-200/70 px-2.5 py-1 rounded-lg text-amber-950">{selectedRowDetail.diffCount} Kolom Berbeda</span>
               </div>
 
