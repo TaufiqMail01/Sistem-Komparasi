@@ -111,17 +111,17 @@ export default function App() {
     }
   };
 
-  // Format universal untuk Rupiah, Tanggal, dan Teks
+  // Format universal untuk Rupiah, Pajak/Keuangan, BPJS, Tanggal, dan Teks
   const formatCellValue = (headerName, val) => {
     if (val === null || val === undefined || val === "") return "-";
     
     const lowerHeader = headerName.toLowerCase();
     
-    // Deteksi komprehensif untuk data keuangan / nominal / gaji
+    // Deteksi komprehensif untuk data keuangan / nominal / gaji / pajak / bpjs
     const currencyKeywords = [
       'gaji', 'tunjangan', 'potongan', 'bonus', 'insentif', 'lembur', 'thr', 
       'bruto', 'thp', 'total', 'bayar', 'umk', 'penalty', 'bpjs', 'kompensasi', 
-      'pajak', 'pph', 'nominal', 'jumlah', 'harga', 'biaya', 'rp', 'saltab'
+      'pajak', 'pph', 'nominal', 'jumlah', 'harga', 'biaya', 'rp', 'saltab', 'hasil_formula'
     ];
     const isCurrency = currencyKeywords.some(keyword => lowerHeader.includes(keyword));
 
@@ -317,7 +317,6 @@ export default function App() {
   const exportToExcel = () => {
     if (!comparisonResult) return;
     
-    // Ekspor hanya data yang sedang difilter di layar sesuai tab aktif
     const exportData = filteredResults.map(item => {
       const row = {
         'Status': item.status,
@@ -490,7 +489,7 @@ export default function App() {
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
                 <Binary className="w-4 h-4 text-indigo-600" />
-                Modul Evaluasi Formula Kustom (Dynamic Custom Formula Engine):
+                Modul Evaluasi Formula Kustom (Keuangan, Pajak, Gaji, BPJS, dll.):
               </label>
               <label className="flex items-center gap-2 text-xs text-indigo-800 font-medium cursor-pointer">
                 <input type="checkbox" checked={enableFormula} onChange={(e) => setEnableFormula(e.target.checked)} className="w-4 h-4 text-indigo-600 rounded border-indigo-300" />
@@ -500,7 +499,7 @@ export default function App() {
 
             {enableFormula && (
               <div className="space-y-2.5 animate-fade-in">
-                <input type="text" placeholder="Contoh: [Gaji] + [Tunjangan] - [Potongan]" value={formulaExpr} onChange={(e) => setFormulaExpr(e.target.value)} className="w-full bg-white text-xs font-mono text-slate-800 rounded-xl border border-indigo-200 px-3.5 py-2.5 shadow-sm" />
+                <input type="text" placeholder="Contoh: [Gaji_Pokok] + [Tunjangan] - [BPJS_Kesehatan] - [Pph21]" value={formulaExpr} onChange={(e) => setFormulaExpr(e.target.value)} className="w-full bg-white text-xs font-mono text-slate-800 rounded-xl border border-indigo-200 px-3.5 py-2.5 shadow-sm" />
                 <div>
                   <span className="text-[11px] font-semibold text-slate-600 block mb-1">Klik nama kolom untuk menyisipkan ke rumus:</span>
                   <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
