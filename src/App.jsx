@@ -316,7 +316,9 @@ export default function App() {
 
   const exportToExcel = () => {
     if (!comparisonResult) return;
-    const exportData = comparisonResult.results.map(item => {
+    
+    // Ekspor hanya data yang sedang difilter di layar sesuai tab aktif
+    const exportData = filteredResults.map(item => {
       const row = {
         'Status': item.status,
         'Kunci / Identifier': item.key,
@@ -335,8 +337,8 @@ export default function App() {
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Hasil Rekonsiliasi");
-    XLSX.writeFile(workbook, "Laporan_Hasil_Rekonsiliasi.xlsx");
+    XLSX.utils.book_append_sheet(workbook, worksheet, `Rekonsiliasi_${filter}`);
+    XLSX.writeFile(workbook, `Laporan_Rekonsiliasi_${filter}.xlsx`);
   };
 
   return (
@@ -359,13 +361,6 @@ export default function App() {
                   Sistem Komparasi & Rekonsiliasi Data Excel Universal
                 </h1>
               </div>
-            </div>
-
-            <div className="flex items-center gap-2 text-xs">
-              <button onClick={exportToExcel} disabled={!comparisonResult} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium rounded-xl shadow-sm transition-all border border-emerald-500/30">
-                <Download className="w-4 h-4" />
-                <span>Ekspor Laporan (.xlsx)</span>
-              </button>
             </div>
           </div>
         </div>
@@ -458,10 +453,10 @@ export default function App() {
                 disabled={!file1 || !file2}
                 className="w-full bg-slate-50 text-xs font-medium text-slate-800 rounded-xl border border-slate-300 px-3 py-2 disabled:opacity-50"
               >
-                <option value="__INDEX__">Pencocokan Baris (Nomor Urut / Index)</option>
+                <option value="">-- Pilih Kolom ID Unik (Contoh: NRK / NIK) --</option>
                 {commonHeaders.map(col => <option key={col} value={col}>{col}</option>)}
               </select>
-              <p className="text-[11px] text-slate-400">Pilih kolom ID Unik (NRK, NIK, ID, Kode) agar data tidak tertukar.</p>
+              <p className="text-[11px] text-slate-400">Pilih kolom ID unik agar baris dicocokkan secara akurat.</p>
             </div>
 
             <div className="space-y-2">
@@ -575,22 +570,34 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
-              {[
-                { key: 'ALL', label: 'Semua Status' },
-                { key: 'MATCHED', label: 'Identik' },
-                { key: 'MODIFIED', label: 'Beda' },
-                { key: 'ADDED', label: 'Baru' },
-                { key: 'DELETED', label: 'Dihapus' },
-              ].map(tab => (
-                <button
-                  key={tab.key}
-                  onClick={() => setFilter(tab.key)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${filter === tab.key ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
-                >
-                  {tab.label}
-                </button>
-              ))}
+            {/* Tab Filter & Tombol Ekspor Kategori Dinamis */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-2.5 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
+                {[
+                  { key: 'ALL', label: 'Semua Status' },
+                  { key: 'MATCHED', label: 'Identik' },
+                  { key: 'MODIFIED', label: 'Beda' },
+                  { key: 'ADDED', label: 'Baru' },
+                  { key: 'DELETED', label: 'Dihapus' },
+                ].map(tab => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setFilter(tab.key)}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${filter === tab.key ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'}`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              <button 
+                onClick={exportToExcel} 
+                disabled={!comparisonResult || filteredResults.length === 0} 
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium text-xs rounded-xl shadow-sm transition-all border border-emerald-500/30 whitespace-nowrap w-full sm:w-auto justify-center"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Ekspor Kategori ({filter})</span>
+              </button>
             </div>
 
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -605,7 +612,7 @@ export default function App() {
                         <th key={h} className="p-3 min-w-[140px]">{h}</th>
                       ))}
                       {comparisonResult.headers.length > 3 && (
-                        <th className="p-3 text-slate-400 italic">+ {comparisonResult.headers.length - 3} Kolom Lainnya (Cek Detail)</th>
+                        <th className="p-3 text-slate-400 italic">+ {comparisonResult.headers.length - 3} Kolom Lainnya</th>
                       )}
                     </tr>
                   </thead>
@@ -613,7 +620,7 @@ export default function App() {
                     {filteredResults.length === 0 ? (
                       <tr>
                         <td colSpan={comparisonResult.headers.length + 3} className="p-8 text-center text-slate-400">
-                          Tidak ada data yang cocok dengan filter.
+                          Tidak ada data yang cocok dengan filter. Pastikan Primary Key sudah dipilih dengan benar!
                         </td>
                       </tr>
                     ) : (
@@ -650,7 +657,7 @@ export default function App() {
                             );
                           })}
                           {comparisonResult.headers.length > 3 && (
-                            <td className="p-3 text-slate-400 italic">Klik ikon mata (👁) untuk lihat selengkapnya</td>
+                            <td className="p-3 text-slate-400 italic">Klik ikon mata (👁)</td>
                           )}
                         </tr>
                       ))
@@ -663,12 +670,10 @@ export default function App() {
         )}
       </main>
 
-      {/* Modal Detail Audit dengan Desain Lebih Rapi & Profesional */}
+      {/* Modal Detail Audit */}
       {selectedRowDetail && comparisonResult && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-fade-in border border-slate-100">
-            
-            {/* Header Modal */}
             <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-900 text-white">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-indigo-600 rounded-xl text-white">
@@ -679,25 +684,14 @@ export default function App() {
                   <p className="text-xs text-slate-300">Identifier (Primary Key): <span className="font-mono text-amber-400 font-bold">{selectedRowDetail.key}</span></p>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
-                  selectedRowDetail.status === 'MATCHED' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
-                  selectedRowDetail.status === 'MODIFIED' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
-                  selectedRowDetail.status === 'ADDED' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
-                  'bg-rose-50/20 text-rose-300 border border-rose-500/30'
-                }`}>
-                  {selectedRowDetail.status}
-                </span>
-                <button onClick={() => setSelectedRowDetail(null)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 hover:text-white transition-colors">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+              <button onClick={() => setSelectedRowDetail(null)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 hover:text-white transition-colors">
+                <X className="w-5 h-5" />
+              </button>
             </div>
             
-            {/* Body Content */}
             <div className="p-6 overflow-y-auto space-y-4 flex-1 bg-slate-50/50">
               <div className="bg-amber-50/80 border border-amber-200/80 p-3.5 rounded-2xl text-xs text-amber-900 flex items-center justify-between shadow-xs">
-                <span className="font-medium">Perbandingan atribut dan perhitungan nilai secara berdampingan. Atribut yang berbeda disorot kuning.</span>
+                <span className="font-medium">Perbandingan atribut data secara presisi berdasarkan kunci utama (Primary Key).</span>
                 <span className="font-bold bg-amber-200/70 px-2.5 py-1 rounded-lg text-amber-950">{selectedRowDetail.diffCount} Kolom Berbeda</span>
               </div>
 
@@ -734,13 +728,11 @@ export default function App() {
               </div>
             </div>
 
-            {/* Footer Modal */}
             <div className="p-4 border-t border-slate-100 bg-white flex justify-end">
               <button onClick={() => setSelectedRowDetail(null)} className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl transition-colors shadow-sm">
                 Tutup Jendela Detail
               </button>
             </div>
-
           </div>
         </div>
       )}
