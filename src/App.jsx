@@ -21,7 +21,7 @@ export default function App() {
     selectedColumns: []
   });
 
-  const [pkSearchQuery, setPkSearchQuery] = useState(''); // State untuk kotak pencarian Primary Key
+  const [pkSearchQuery, setPkSearchQuery] = useState('');
   const [enableFormula, setEnableFormula] = useState(false);
   const [formulaExpr, setFormulaExpr] = useState('');
 
@@ -40,7 +40,10 @@ export default function App() {
           const sheetsData = {};
           sheetNames.forEach(name => {
             const worksheet = workbook.Sheets[name];
-            const json = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+            // Filter otomatis baris yang seluruh kolomnya kosong agar tidak terbaca sebagai data sampah
+            const json = XLSX.utils.sheet_to_json(worksheet, { defval: "" }).filter(row => {
+              return Object.values(row).some(val => val !== "" && val !== null && val !== undefined);
+            });
             sheetsData[name] = json;
           });
 
@@ -94,7 +97,6 @@ export default function App() {
     return Array.from(new Set([...h1, ...h2]));
   }, [file1, file2, sheet1, sheet2]);
 
-  // Filter daftar kolom berdasarkan teks pencarian Primary Key
   const filteredPkHeaders = useMemo(() => {
     if (!pkSearchQuery.trim()) return commonHeaders;
     return commonHeaders.filter(col => col.toLowerCase().includes(pkSearchQuery.toLowerCase()));
@@ -184,7 +186,10 @@ export default function App() {
 
     const getRowKeyString = (row) => {
       if (!primaryKeys || primaryKeys.length === 0) return null;
-      return primaryKeys.map(k => normalizeVal(row[k])).join(' | ');
+      const keys = primaryKeys.map(k => normalizeVal(row[k]));
+      // Jika ada nilai primary key yang kosong/blank, abaikan baris tersebut agar tidak terbaca sebagai data kosong
+      if (keys.some(k => k === "")) return null;
+      return keys.join(' | ');
     };
 
     const areValuesEqual = (val1, val2) => {
@@ -218,8 +223,9 @@ export default function App() {
       return newRow;
     };
 
-    const enrichedData1 = data1.map(enrichRow);
-    const enrichedData2 = data2.map(enrichRow);
+    // Filter baris yang primary key-nya valid (tidak kosong)
+    const enrichedData1 = data1.map(enrichRow).filter(row => primaryKeys.length === 0 || getRowKeyString(row) !== null);
+    const enrichedData2 = data2.map(enrichRow).filter(row => primaryKeys.length === 0 || getRowKeyString(row) !== null);
 
     if (primaryKeys && primaryKeys.length > 0) {
       const map2 = new Map();
@@ -232,12 +238,13 @@ export default function App() {
 
       enrichedData1.forEach((row1, idx) => {
         const compositeKey = getRowKeyString(row1);
-        const row2 = compositeKey ? map2.get(compositeKey) : null;
+        if (!compositeKey) return;
+        const row2 = map2.get(compositeKey);
 
         if (!row2) {
           results.push({
             id: `row-del-${idx}`,
-            key: compositeKey || `Baris ${idx + 1}`,
+            key: compositeKey,
             status: 'DELETED',
             diffCount: activeHeaders.length,
             row1, row2: null, diffs: {}
@@ -336,21 +343,25 @@ export default function App() {
     return comparisonResult.results.filter(r => r.status === filter);
   }, [comparisonResult, filter]);
 
+  // Format Ekspor Excel Side-by-Side Terstruktur (Mudah Dibaca: Data Lama vs Data Baru)
   const exportToExcel = () => {
     if (!comparisonResult) return;
     
     const exportData = filteredResults.map(item => {
       const row = {
-        'Status': item.status,
+        'Status Komparasi': item.status === 'MATCHED' ? 'Identik (Sama)' : 
+                            item.status === 'MODIFIED' ? 'Berbeda (Modified)' : 
+                            item.status === 'ADDED' ? 'Baru (Added)' : 'Dihapus (Deleted)',
         'Composite Primary Key': item.key,
-        'Jumlah Beda Kolom': item.diffCount
+        'Jumlah Kolom Beda': item.diffCount
       };
+
       comparisonResult.headers.forEach(h => {
         if (item.status === 'MATCHED') {
-          row[h] = item.row1 ? item.row1[h] : "";
+          row[`${h} (Data Sama)`] = item.row1 ? item.row1[h] : "";
         } else {
-          row[`${h} (File 1)`] = item.row1 ? item.row1[h] : "";
-          row[`${h} (File 2)`] = item.row2 ? item.row2[h] : "";
+          row[`${h} [Lama / File 1]`] = item.row1 ? item.row1[h] : "-";
+          row[`${h} [Baru / File 2]`] = item.row2 ? item.row2[h] : "-";
         }
       });
       return row;
@@ -470,7 +481,6 @@ export default function App() {
                 Pilih Kolom Kunci Utama (Multi-Select):
               </label>
 
-              {/* Kotak Pencarian Kolom Primary Key */}
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                 <input 
@@ -504,7 +514,7 @@ export default function App() {
                   })
                 )}
               </div>
-              <p className="text-[11px] text-slate-400">Centang 1 atau beberapa kolom unik.</p>
+              <p className="text-[11px] text-slate-400">Baris kosong dengan Primary Key blank akan otomatis diabaikan.</p>
             </div>
 
             <div className="space-y-4 md:col-span-1">
@@ -534,14 +544,14 @@ export default function App() {
               </div>
             </div>
 
-            <div className="space-y-1.5 md:col-span-1 bg-amber-50/50 border border-amber-200/60 p-4 rounded-xl flex flex-col justify-between">
+            <div className="space-y-1.5 md:col-span-1 bg-emerald-50/50 border border-emerald-200/60 p-4 rounded-xl flex flex-col justify-between">
               <div>
-                <span className="text-xs font-bold text-amber-900 block mb-1">Info Composite Key:</span>
-                <p className="text-[11px] text-amber-800 leading-relaxed">
-                  Gunakan kotak pencarian di atas untuk menemukan kolom kunci dengan cepat jika file Excel Anda memiliki banyak kolom.
+                <span className="text-xs font-bold text-emerald-900 block mb-1">Pembersihan Otomatis (Data Kosong):</span>
+                <p className="text-[11px] text-emerald-800 leading-relaxed">
+                  Sistem kini otomatis memfilter baris kosong atau sel kosong pada kolom Primary Key sehingga laporan bersih dari data sampah Excel.
                 </p>
               </div>
-              <div className="pt-2 text-[11px] font-semibold text-amber-900 truncate">
+              <div className="pt-2 text-[11px] font-semibold text-emerald-950 truncate">
                 Terpilih: {config.primaryKeys.length > 0 ? config.primaryKeys.join(' + ') : 'Belum ada (Default Baris)'}
               </div>
             </div>
@@ -657,7 +667,7 @@ export default function App() {
                 className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium text-xs rounded-xl shadow-sm transition-all border border-emerald-500/30 whitespace-nowrap w-full sm:w-auto justify-center"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>Ekspor Kategori ({filter})</span>
+                <span>Ekspor Kategori Terstruktur ({filter})</span>
               </button>
             </div>
 
