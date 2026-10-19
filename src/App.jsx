@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import { 
   Upload, FileSpreadsheet, ArrowRightLeft, Download, 
   Settings, Key, Sliders, Layers, CheckCircle, AlertTriangle, 
-  PlusCircle, MinusCircle, Eye, CheckCircle2, AlertCircle, FilePlus, FileMinus, X, Calculator, Plus, RotateCcw, Database, Type, Binary, CheckSquare, Square, Search
+  PlusCircle, MinusCircle, Eye, CheckCircle2, AlertCircle, FilePlus, FileMinus, X, Calculator, Plus, RotateCcw, Database, Type, Binary, CheckSquare, Square, Search, Filter
 } from 'lucide-react';
 
 export default function App() {
@@ -26,7 +26,10 @@ export default function App() {
   const [formulaExpr, setFormulaExpr] = useState('');
 
   const [filter, setFilter] = useState('ALL');
+  const [nameSearchFilter, setNameSearchFilter] = useState('');
   const [selectedRowDetail, setSelectedRowDetail] = useState(null);
+  
+  const [selectedRowIds, setSelectedRowIds] = useState([]); // State untuk menyimpan ID baris yang dicentang
 
   const readFileData = (file) => {
     return new Promise((resolve, reject) => {
@@ -40,7 +43,6 @@ export default function App() {
           const sheetsData = {};
           sheetNames.forEach(name => {
             const worksheet = workbook.Sheets[name];
-            // Filter otomatis baris yang seluruh kolomnya kosong agar tidak terbaca sebagai data sampah
             const json = XLSX.utils.sheet_to_json(worksheet, { defval: "" }).filter(row => {
               return Object.values(row).some(val => val !== "" && val !== null && val !== undefined);
             });
@@ -86,6 +88,8 @@ export default function App() {
     setEnableFormula(false);
     setConfig(prev => ({ ...prev, primaryKeys: [] }));
     setPkSearchQuery('');
+    setNameSearchFilter('');
+    setSelectedRowIds([]);
   };
 
   const commonHeaders = useMemo(() => {
@@ -187,7 +191,6 @@ export default function App() {
     const getRowKeyString = (row) => {
       if (!primaryKeys || primaryKeys.length === 0) return null;
       const keys = primaryKeys.map(k => normalizeVal(row[k]));
-      // Jika ada nilai primary key yang kosong/blank, abaikan baris tersebut agar tidak terbaca sebagai data kosong
       if (keys.some(k => k === "")) return null;
       return keys.join(' | ');
     };
@@ -223,7 +226,6 @@ export default function App() {
       return newRow;
     };
 
-    // Filter baris yang primary key-nya valid (tidak kosong)
     const enrichedData1 = data1.map(enrichRow).filter(row => primaryKeys.length === 0 || getRowKeyString(row) !== null);
     const enrichedData2 = data2.map(enrichRow).filter(row => primaryKeys.length === 0 || getRowKeyString(row) !== null);
 
@@ -339,15 +341,59 @@ export default function App() {
 
   const filteredResults = useMemo(() => {
     if (!comparisonResult) return [];
-    if (filter === 'ALL') return comparisonResult.results;
-    return comparisonResult.results.filter(r => r.status === filter);
-  }, [comparisonResult, filter]);
+    let res = comparisonResult.results;
 
-  // Format Ekspor Excel Side-by-Side Terstruktur (Mudah Dibaca: Data Lama vs Data Baru)
+    if (filter !== 'ALL') {
+      res = res.filter(r => r.status === filter);
+    }
+
+    if (nameSearchFilter.trim()) {
+      const q = nameSearchFilter.toLowerCase();
+      res = res.filter(r => {
+        if (r.key.toLowerCase().includes(q)) return true;
+        const matchRow1 = r.row1 && Object.values(r.row1).some(val => String(val).toLowerCase().includes(q));
+        const matchRow2 = r.row2 && Object.values(r.row2).some(val => String(val).toLowerCase().includes(q));
+        return matchRow1 || matchRow2;
+      });
+    }
+
+    return res;
+  }, [comparisonResult, filter, nameSearchFilter]);
+
+  // Fungsi toggle ceklis per baris
+  const toggleRowSelection = (id) => {
+    setSelectedRowIds(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  // Fungsi pilih semua baris yang sedang tampil di layar
+  const toggleSelectAll = () => {
+    const allFilteredIds = filteredResults.map(r => r.id);
+    const isAllSelected = allFilteredIds.every(id => selectedRowIds.includes(id));
+    
+    if (isAllSelected) {
+      setSelectedRowIds(prev => prev.filter(id => !allFilteredIds.includes(id)));
+    } else {
+      const combined = Array.from(new Set([...selectedRowIds, ...allFilteredIds]));
+      setSelectedRowIds(combined);
+    }
+  };
+
+  // Fungsi Ekspor Excel (Jika ada yang dicentang, ekspor yang dicentang saja. Jika tidak ada, ekspor semua hasil filter)
   const exportToExcel = () => {
     if (!comparisonResult) return;
     
-    const exportData = filteredResults.map(item => {
+    const targetData = selectedRowIds.length > 0 
+      ? comparisonResult.results.filter(r => selectedRowIds.includes(r.id))
+      : filteredResults;
+
+    if (targetData.length === 0) {
+      alert("Tidak ada data yang dipilih untuk diekspor!");
+      return;
+    }
+
+    const exportData = targetData.map(item => {
       const row = {
         'Status Komparasi': item.status === 'MATCHED' ? 'Identik (Sama)' : 
                             item.status === 'MODIFIED' ? 'Berbeda (Modified)' : 
@@ -369,8 +415,9 @@ export default function App() {
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, `Rekonsiliasi_${filter}`);
-    XLSX.writeFile(workbook, `Laporan_Rekonsiliasi_${filter}.xlsx`);
+    XLSX.utils.book_append_sheet(workbook, worksheet, `Rekonsiliasi_Terpilih`);
+    const suffix = selectedRowIds.length > 0 ? `_Pilihan_Manual` : `_${filter}`;
+    XLSX.writeFile(workbook, `Laporan_Rekonsiliasi${suffix}.xlsx`);
   };
 
   return (
@@ -514,7 +561,7 @@ export default function App() {
                   })
                 )}
               </div>
-              <p className="text-[11px] text-slate-400">Baris kosong dengan Primary Key blank akan otomatis diabaikan.</p>
+              <p className="text-[11px] text-slate-400">Baris kosong dengan Primary Key blank otomatis diabaikan.</p>
             </div>
 
             <div className="space-y-4 md:col-span-1">
@@ -546,9 +593,9 @@ export default function App() {
 
             <div className="space-y-1.5 md:col-span-1 bg-emerald-50/50 border border-emerald-200/60 p-4 rounded-xl flex flex-col justify-between">
               <div>
-                <span className="text-xs font-bold text-emerald-900 block mb-1">Pembersihan Otomatis (Data Kosong):</span>
+                <span className="text-xs font-bold text-emerald-900 block mb-1">Fitur Ceklis Interaktif:</span>
                 <p className="text-[11px] text-emerald-800 leading-relaxed">
-                  Sistem kini otomatis memfilter baris kosong atau sel kosong pada kolom Primary Key sehingga laporan bersih dari data sampah Excel.
+                  Kini Anda dapat mencentang baris tertentu pada tabel hasil komparasi untuk mengekspor data pilihan secara spesifik.
                 </p>
               </div>
               <div className="pt-2 text-[11px] font-semibold text-emerald-950 truncate">
@@ -641,9 +688,9 @@ export default function App() {
               </div>
             </div>
 
-            {/* Tab Filter & Tombol Ekspor Kategori Dinamis */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-2.5 rounded-2xl border border-slate-200 shadow-sm">
-              <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
+            {/* Tab Filter, Kotak Pencarian & Tombol Ekspor Data Terpilih */}
+            <div className="flex flex-col lg:flex-row items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex items-center gap-1.5 overflow-x-auto w-full lg:w-auto">
                 {[
                   { key: 'ALL', label: 'Semua Status' },
                   { key: 'MATCHED', label: 'Identik' },
@@ -661,14 +708,30 @@ export default function App() {
                 ))}
               </div>
 
-              <button 
-                onClick={exportToExcel} 
-                disabled={!comparisonResult || filteredResults.length === 0} 
-                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium text-xs rounded-xl shadow-sm transition-all border border-emerald-500/30 whitespace-nowrap w-full sm:w-auto justify-center"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Ekspor Kategori Terstruktur ({filter})</span>
-              </button>
+              <div className="flex flex-col sm:flex-row items-center gap-2 w-full lg:w-auto">
+                <div className="relative w-full sm:w-64">
+                  <Filter className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                  <input 
+                    type="text" 
+                    placeholder="Cari nama / ID tertentu..." 
+                    value={nameSearchFilter}
+                    onChange={(e) => setNameSearchFilter(e.target.value)}
+                    className="w-full bg-slate-50 text-xs text-slate-800 rounded-xl border border-slate-300 pl-8 pr-3 py-1.5"
+                  />
+                  {nameSearchFilter && (
+                    <button onClick={() => setNameSearchFilter('')} className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 text-xs font-bold">×</button>
+                  )}
+                </div>
+
+                <button 
+                  onClick={exportToExcel} 
+                  disabled={!comparisonResult || filteredResults.length === 0} 
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium text-xs rounded-xl shadow-sm transition-all border border-emerald-500/30 whitespace-nowrap w-full sm:w-auto justify-center"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Ekspor ({selectedRowIds.length > 0 ? `${selectedRowIds.length} Dipilih` : `Semua Filter`})</span>
+                </button>
+              </div>
             </div>
 
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -676,6 +739,15 @@ export default function App() {
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-100 text-slate-700 uppercase font-semibold sticky top-0 z-10 border-b border-slate-200">
                     <tr>
+                      <th className="p-3 w-10 text-center">
+                        <input 
+                          type="checkbox" 
+                          onChange={toggleSelectAll}
+                          checked={filteredResults.length > 0 && filteredResults.every(r => selectedRowIds.includes(r.id))}
+                          className="w-4 h-4 text-indigo-600 rounded border-slate-300 cursor-pointer"
+                          title="Pilih Semua di Halaman Ini"
+                        />
+                      </th>
                       <th className="p-3 w-12 text-center">Aksi</th>
                       <th className="p-3 w-28">Status</th>
                       <th className="p-3 w-48">Composite Key</th>
@@ -690,48 +762,59 @@ export default function App() {
                   <tbody className="divide-y divide-slate-100">
                     {filteredResults.length === 0 ? (
                       <tr>
-                        <td colSpan={comparisonResult.headers.length + 3} className="p-8 text-center text-slate-400">
-                          Tidak ada data yang cocok dengan filter. Pastikan Primary Key sudah dicentang dengan benar!
+                        <td colSpan={comparisonResult.headers.length + 4} className="p-8 text-center text-slate-400">
+                          Tidak ada data yang cocok dengan pencarian nama / filter aktif.
                         </td>
                       </tr>
                     ) : (
-                      filteredResults.map(row => (
-                        <tr key={row.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="p-3 text-center">
-                            <button
-                              onClick={() => setSelectedRowDetail(row)}
-                              className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors shadow-2xs"
-                              title="Lihat Detail Side-by-Side"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
-                          </td>
-                          <td className="p-3">
-                            {row.status === 'MATCHED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800"><CheckCircle2 className="w-3.5 h-3.5" /> Sesuai</span>}
-                            {row.status === 'MODIFIED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-800"><AlertCircle className="w-3.5 h-3.5" /> Beda</span>}
-                            {row.status === 'ADDED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-100 text-blue-800"><FilePlus className="w-3.5 h-3.5" /> Baru</span>}
-                            {row.status === 'DELETED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-100 text-rose-800"><FileMinus className="w-3.5 h-3.5" /> Hapus</span>}
-                          </td>
-                          <td className="p-3 font-mono font-medium text-slate-800">{row.key}</td>
-                          {comparisonResult.headers.slice(0, 3).map(h => {
-                            const diff = row.diffs[h];
-                            const isDiff = diff && !diff.isEqual;
-                            return (
-                              <td key={h} className={`p-3 ${isDiff ? 'bg-amber-50 font-semibold text-amber-900 border-l-2 border-amber-400' : 'text-slate-600'}`}>
-                                {row.status === 'MATCHED' ? formatCellValue(h, row.row1 ? row.row1[h] : "") : (
-                                  <div className="flex flex-col gap-0.5">
-                                    <span>{formatCellValue(h, row.row1 ? row.row1[h] : "")}</span>
-                                    {isDiff && <span className="text-rose-600 font-bold text-[11px] pt-0.5 border-t border-dashed border-amber-200">➔ {formatCellValue(h, row.row2 ? row.row2[h] : "")}</span>}
-                                  </div>
-                                )}
-                              </td>
-                            );
-                          })}
-                          {comparisonResult.headers.length > 3 && (
-                            <td className="p-3 text-slate-400 italic">Klik ikon mata (👁)</td>
-                          )}
-                        </tr>
-                      ))
+                      filteredResults.map(row => {
+                        const isChecked = selectedRowIds.includes(row.id);
+                        return (
+                          <tr key={row.id} className={`transition-colors ${isChecked ? 'bg-indigo-50/50' : 'hover:bg-slate-50'}`}>
+                            <td className="p-3 text-center">
+                              <input 
+                                type="checkbox" 
+                                checked={isChecked}
+                                onChange={() => toggleRowSelection(row.id)}
+                                className="w-4 h-4 text-indigo-600 rounded border-slate-300 cursor-pointer"
+                              />
+                            </td>
+                            <td className="p-3 text-center">
+                              <button
+                                onClick={() => setSelectedRowDetail(row)}
+                                className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors shadow-2xs"
+                                title="Lihat Detail Side-by-Side"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
+                            </td>
+                            <td className="p-3">
+                              {row.status === 'MATCHED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800"><CheckCircle2 className="w-3.5 h-3.5" /> Sesuai</span>}
+                              {row.status === 'MODIFIED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-800"><AlertCircle className="w-3.5 h-3.5" /> Beda</span>}
+                              {row.status === 'ADDED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-100 text-blue-800"><FilePlus className="w-3.5 h-3.5" /> Baru</span>}
+                              {row.status === 'DELETED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-100 text-rose-800"><FileMinus className="w-3.5 h-3.5" /> Hapus</span>}
+                            </td>
+                            <td className="p-3 font-mono font-medium text-slate-800">{row.key}</td>
+                            {comparisonResult.headers.slice(0, 3).map(h => {
+                              const diff = row.diffs[h];
+                              const isDiff = diff && !diff.isEqual;
+                              return (
+                                <td key={h} className={`p-3 ${isDiff ? 'bg-amber-50 font-semibold text-amber-900 border-l-2 border-amber-400' : 'text-slate-600'}`}>
+                                  {row.status === 'MATCHED' ? formatCellValue(h, row.row1 ? row.row1[h] : "") : (
+                                    <div className="flex flex-col gap-0.5">
+                                      <span>{formatCellValue(h, row.row1 ? row.row1[h] : "")}</span>
+                                      {isDiff && <span className="text-rose-600 font-bold text-[11px] pt-0.5 border-t border-dashed border-amber-200">➔ {formatCellValue(h, row.row2 ? row.row2[h] : "")}</span>}
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            })}
+                            {comparisonResult.headers.length > 3 && (
+                              <td className="p-3 text-slate-400 italic">Klik ikon mata (👁)</td>
+                            )}
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
