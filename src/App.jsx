@@ -405,7 +405,7 @@ export default function App() {
                             item.status === 'MODIFIED' ? 'Berbeda (Modified)' : 
                             item.status === 'ADDED' ? 'Baru (Added)' : 'Dihapus (Deleted)',
         'Composite Primary Key': item.key,
-        'Jumlah Kolom Beda': item.diffCount
+        'Letak Kolom diexcel': item.diffCount
       };
 
       comparisonResult.headers.forEach(h => {
