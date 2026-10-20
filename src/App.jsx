@@ -38,6 +38,21 @@ export default function App() {
   const [selectedRowDetail, setSelectedRowDetail] = useState(null);
   const [selectedRowIds, setSelectedRowIds] = useState([]);
 
+  // Helper untuk memparsing angka dengan format desimal Indonesia (koma / titik ribuan)
+  const parseIndonesianNumber = (val) => {
+    if (val === null || val === undefined || val === "") return NaN;
+    if (typeof val === 'number') return val;
+    let s = String(val).trim();
+    s = s.replace(/Rp\.?/gi, '').trim(); // Hilangkan teks Rp jika ada
+    if (s.includes(',') && s.includes('.')) {
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else if (s.includes(',')) {
+      s = s.replace(',', '.');
+    }
+    const num = Number(s);
+    return isNaN(num) ? NaN : num;
+  };
+
   const readFileData = (file) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -55,7 +70,7 @@ export default function App() {
             const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
             
             let headerRowIndex = 0;
-            const keywords = ['NO', 'ID', 'KODE', 'NRK', 'NIP', 'NAMA', 'KARYAWAN', 'NIK'];
+            const keywords = ['NO', 'ID', 'KODE', 'NRK', 'NIP', 'NAMA', 'KARYAWAN', 'NIK', 'EMPLOYEE', 'NAMA LENGKAP'];
 
             for (let i = 0; i < rawRows.length; i++) {
               const rowValues = rawRows[i].map(cell => String(cell).trim().toUpperCase());
@@ -159,7 +174,7 @@ export default function App() {
     try {
       let evaluatedExpr = expr;
       headers.forEach(h => {
-        const val = Number(row[h]) || 0;
+        const val = parseIndonesianNumber(row[h]) || 0;
         const regex = new RegExp(`\\[${h}\\]`, 'g');
         evaluatedExpr = evaluatedExpr.replace(regex, val);
       });
@@ -200,8 +215,9 @@ export default function App() {
     ];
     const isCurrency = currencyKeywords.some(keyword => lowerHeader.includes(keyword));
 
-    if (isCurrency && !isNaN(Number(val)) && typeof val !== 'boolean') {
-      return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Number(val));
+    const numVal = parseIndonesianNumber(val);
+    if (isCurrency && !isNaN(numVal) && typeof val !== 'boolean') {
+      return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(numVal);
     }
 
     const dateKeywords = ['tanggal', 'date', 'tgl', 'start', 'end', 'join', 'expired', 'lahir'];
@@ -308,8 +324,8 @@ export default function App() {
       const s1 = val1 === null || val1 === undefined ? "" : String(val1).trim();
       const s2 = val2 === null || val2 === undefined ? "" : String(val2).trim();
 
-      const n1 = Number(s1);
-      const n2 = Number(s2);
+      const n1 = parseIndonesianNumber(val1);
+      const n2 = parseIndonesianNumber(val2);
       if (!isNaN(n1) && !isNaN(n2) && s1 !== "" && s2 !== "") {
         return Math.abs(n1 - n2) <= numericTolerance;
       }
