@@ -51,7 +51,7 @@ export default function App() {
           sheetNames.forEach(name => {
             const worksheet = workbook.Sheets[name];
             
-            // 1. Baca sheet secara mentah untuk mendeteksi baris header tabel utama secara otomatis
+            // 1. Baca sheet secara mentah untuk mendeteksi baris header tabel utama secara otomatis (mengabaikan judul/logo)
             const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
             
             let headerRowIndex = 0;
@@ -66,7 +66,7 @@ export default function App() {
               }
             }
 
-            // 2. Baca ulang sheet mulai dari baris header yang ditemukan (mengabaikan judul/logo di atasnya)
+            // 2. Baca ulang sheet mulai dari baris header yang ditemukan
             const json = XLSX.utils.sheet_to_json(worksheet, { range: headerRowIndex, defval: "" }).filter(row => {
               return Object.values(row).some(val => val !== "" && val !== null && val !== undefined);
             });
@@ -175,10 +175,21 @@ export default function App() {
     
     const lowerHeader = headerName.toLowerCase();
     
+    // Pengecualian agar kolom nomor/identitas tidak terformat jadi Rupiah
+    const excludeCurrencyKeywords = ['no', 'nomor', 'nik', 'nrk', 'kode', 'id', 'telp', 'phone', 'npwp', 'rekening'];
+    const isExcludedFromCurrency = excludeCurrencyKeywords.some(keyword => {
+      const regex = new RegExp(`(^|[^a-z])${keyword}([^a-z]|$)`, 'i');
+      return regex.test(lowerHeader);
+    });
+
+    if (isExcludedFromCurrency) {
+      return String(val);
+    }
+
     const currencyKeywords = [
       'gaji', 'tunjangan', 'potongan', 'bonus', 'insentif', 'lembur', 'thr', 
-      'bruto', 'thp', 'total', 'bayar', 'umk', 'penalty', 'bpjs', 'kompensasi', 
-      'pajak', 'pph', 'nominal', 'jumlah', 'harga', 'biaya', 'rp', 'saltab', 'hasil_formula'
+      'bruto', 'thp', 'total', 'bayar', 'umk', 'penalty', 'kompensasi', 
+      'pajak', 'pph', 'nominal', 'jumlah', 'harga', 'biaya', 'rp', 'saltab', 'hasil_formula', 'iuran'
     ];
     const isCurrency = currencyKeywords.some(keyword => lowerHeader.includes(keyword));
 
