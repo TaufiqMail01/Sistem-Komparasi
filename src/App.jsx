@@ -189,7 +189,8 @@ export default function App() {
     const currencyKeywords = [
       'gaji', 'tunjangan', 'potongan', 'bonus', 'insentif', 'lembur', 'thr', 
       'bruto', 'thp', 'total', 'bayar', 'umk', 'penalty', 'kompensasi', 
-      'pajak', 'pph', 'nominal', 'jumlah', 'harga', 'biaya', 'rp', 'saltab', 'hasil_formula', 'iuran'
+      'pajak', 'pph', 'nominal', 'jumlah', 'harga', 'biaya', 'rp', 'saltab', 'hasil_formula', 'iuran',
+      'overtime', 'jht', 'jkatan', 'jp', 'kesehatan', 'jkk', 'jkm', 'jshk', 'disnaker', 'fix allowance', 'ter max', 'ter min'
     ];
     const isCurrency = currencyKeywords.some(keyword => lowerHeader.includes(keyword));
 
