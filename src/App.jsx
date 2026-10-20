@@ -235,6 +235,16 @@ export default function App() {
         const parts = val.split('T')[0].split('-');
         if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
       }
+      // Penanganan Angka Serial Tanggal Excel (misal: 45288)
+      if (typeof val === 'number' && val > 30000 && val < 60000) {
+        const utc_days = Math.floor(val - 25569);
+        const utc_value = utc_days * 86400;
+        const dateInfo = new Date(utc_value * 1000);
+        const d = String(dateInfo.getUTCDate()).padStart(2, '0');
+        const m = String(dateInfo.getUTCMonth() + 1).padStart(2, '0');
+        const y = dateInfo.getUTCFullYear();
+        return `${d}-${m}-${y}`;
+      }
     }
 
     if (typeof val === 'object') return JSON.stringify(val);
