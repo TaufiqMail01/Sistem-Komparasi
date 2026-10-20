@@ -163,6 +163,12 @@ export default function App() {
         const regex = new RegExp(`\\[${h}\\]`, 'g');
         evaluatedExpr = evaluatedExpr.replace(regex, val);
       });
+
+      // Validasi ketat ekspresi rumus matematika untuk mencegah code injection
+      if (!/^[\d\+\-\*\/\.\(\)\s]+$/.test(evaluatedExpr)) {
+        return "Format Rumus Tidak Valid";
+      }
+
       const result = Function(`'use strict'; return (${evaluatedExpr})`)();
       return isNaN(result) ? 0 : Number(result.toFixed(2));
     } catch (e) {
@@ -175,7 +181,7 @@ export default function App() {
     
     const lowerHeader = headerName.toLowerCase();
     
-    // Pengecualian agar kolom nomor/identitas tidak terformat jadi Rupiah
+    // Pengecualian ketat agar kolom nomor/identitas tidak terformat jadi Rupiah
     const excludeCurrencyKeywords = ['no', 'nomor', 'nik', 'nrk', 'kode', 'id', 'telp', 'phone', 'npwp', 'rekening'];
     const isExcludedFromCurrency = excludeCurrencyKeywords.some(keyword => {
       const regex = new RegExp(`(^|[^a-z])${keyword}([^a-z]|$)`, 'i');
@@ -299,12 +305,19 @@ export default function App() {
     };
 
     const areValuesEqual = (val1, val2) => {
-      const n1 = Number(val1);
-      const n2 = Number(val2);
-      if (!isNaN(n1) && !isNaN(n2) && val1 !== "" && val2 !== "") {
+      const s1 = val1 === null || val1 === undefined ? "" : String(val1).trim();
+      const s2 = val2 === null || val2 === undefined ? "" : String(val2).trim();
+
+      const n1 = Number(s1);
+      const n2 = Number(s2);
+      if (!isNaN(n1) && !isNaN(n2) && s1 !== "" && s2 !== "") {
         return Math.abs(n1 - n2) <= numericTolerance;
       }
-      return normalizeVal(val1) === normalizeVal(val2);
+
+      const finalV1 = ignoreCase ? s1.toLowerCase() : s1;
+      const finalV2 = ignoreCase ? s2.toLowerCase() : s2;
+
+      return finalV1 === finalV2;
     };
 
     let allHeaders = commonHeaders;
