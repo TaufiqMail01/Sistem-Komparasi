@@ -26,11 +26,12 @@ export default function App() {
 
   const [pkSearchQuery, setPkSearchQuery] = useState('');
   
-  // State Formula (Hanya aktif di Mode Kalkulasi)
+  // State Formula & Pencarian Kolom Formula
   const [enableFormula, setEnableFormula] = useState(false);
   const [formulaTargetColumn, setFormulaTargetColumn] = useState('');
   const [customTargetName, setCustomTargetName] = useState('');
   const [formulaExpr, setFormulaExpr] = useState('');
+  const [formulaColumnSearch, setFormulaColumnSearch] = useState('');
 
   const [filter, setFilter] = useState('ALL');
   const [nameSearchFilter, setNameSearchFilter] = useState('');
@@ -95,6 +96,7 @@ export default function App() {
     setEnableFormula(false);
     setFormulaTargetColumn('');
     setCustomTargetName('');
+    setFormulaColumnSearch('');
     setConfig(prev => ({ ...prev, primaryKeys: [] }));
     setPkSearchQuery('');
     setNameSearchFilter('');
@@ -113,6 +115,11 @@ export default function App() {
     if (!pkSearchQuery.trim()) return commonHeaders;
     return commonHeaders.filter(col => col.toLowerCase().includes(pkSearchQuery.toLowerCase()));
   }, [commonHeaders, pkSearchQuery]);
+
+  const filteredFormulaHeaders = useMemo(() => {
+    if (!formulaColumnSearch.trim()) return commonHeaders;
+    return commonHeaders.filter(col => col.toLowerCase().includes(formulaColumnSearch.toLowerCase()));
+  }, [commonHeaders, formulaColumnSearch]);
 
   const togglePrimaryKey = (col) => {
     setConfig(prev => {
@@ -736,13 +743,34 @@ export default function App() {
                   </div>
 
                   <div>
-                    <span className="text-[11px] font-semibold text-slate-600 block mb-1">Klik nama kolom untuk menyisipkan ke rumus:</span>
-                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                      {commonHeaders.map(col => (
-                        <button key={col} onClick={() => insertColumnTagToFormula(col)} className="px-2 py-1 bg-white border border-slate-300 text-xs rounded hover:border-emerald-600 font-mono">
-                          +{col}
-                        </button>
-                      ))}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-1.5">
+                      <span className="text-[11px] font-semibold text-slate-600">Klik nama kolom untuk menyisipkan ke rumus:</span>
+                      
+                      <div className="relative w-full sm:w-64">
+                        <Search className="w-3 h-3 text-slate-400 absolute left-2.5 top-2" />
+                        <input 
+                          type="text" 
+                          placeholder="Cari kolom rumus..." 
+                          value={formulaColumnSearch}
+                          onChange={(e) => setFormulaColumnSearch(e.target.value)}
+                          className="w-full bg-white text-[11px] text-slate-800 rounded-lg border border-emerald-300 pl-7 pr-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        />
+                        {formulaColumnSearch && (
+                          <button onClick={() => setFormulaColumnSearch('')} className="absolute right-2 top-1.5 text-slate-400 hover:text-slate-600 text-xs font-bold">×</button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-2 bg-white/60 border border-emerald-200 rounded-xl">
+                      {filteredFormulaHeaders.length === 0 ? (
+                        <p className="text-[11px] text-slate-400 italic p-1">Kolom tidak ditemukan.</p>
+                      ) : (
+                        filteredFormulaHeaders.map(col => (
+                          <button key={col} onClick={() => insertColumnTagToFormula(col)} className="px-2.5 py-1 bg-white border border-slate-300 text-xs rounded-lg hover:border-emerald-600 hover:bg-emerald-50 font-mono transition-colors shadow-2xs">
+                            +{col}
+                          </button>
+                        ))
+                      )}
                     </div>
                   </div>
                 </div>
