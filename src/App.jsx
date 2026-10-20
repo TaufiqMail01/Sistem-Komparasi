@@ -241,21 +241,24 @@ export default function App() {
   };
 
   const comparisonResult = useMemo(() => {
+    const normalizeVal = (val) => {
+      if (val === null || val === undefined) return "";
+      let s = String(val);
+      if (config.trimWhitespace) {
+        // Hapus spasi awal/akhir sekaligus rapikan spasi ganda di tengah
+        s = s.trim().replace(/\s+/g, ' ');
+      }
+      if (config.ignoreCase) s = s.toLowerCase();
+      return s;
+    };
+
     if (operationMode === 'CALCULATE') {
       const targetFile = file2 || file1;
       const targetSheet = file2 ? sheet2 : sheet1;
       if (!targetFile || !targetSheet) return null;
 
       const data = targetFile.sheetsData[targetSheet] || [];
-      const { primaryKeys, ignoreCase, trimWhitespace } = config;
-
-      const normalizeVal = (val) => {
-        if (val === null || val === undefined) return "";
-        let s = String(val);
-        if (trimWhitespace) s = s.trim();
-        if (ignoreCase) s = s.toLowerCase();
-        return s;
-      };
+      const { primaryKeys } = config;
 
       const getRowKeyString = (row) => {
         if (!primaryKeys || primaryKeys.length === 0) return null;
@@ -303,15 +306,7 @@ export default function App() {
 
     const data1 = file1.sheetsData[sheet1] || [];
     const data2 = file2.sheetsData[sheet2] || [];
-    const { primaryKeys, ignoreCase, trimWhitespace, numericTolerance, selectedColumns } = config;
-
-    const normalizeVal = (val) => {
-      if (val === null || val === undefined) return "";
-      let s = String(val);
-      if (trimWhitespace) s = s.trim();
-      if (ignoreCase) s = s.toLowerCase();
-      return s;
-    };
+    const { primaryKeys, numericTolerance, selectedColumns } = config;
 
     const getRowKeyString = (row) => {
       if (!primaryKeys || primaryKeys.length === 0) return null;
@@ -330,8 +325,8 @@ export default function App() {
         return Math.abs(n1 - n2) <= numericTolerance;
       }
 
-      const finalV1 = ignoreCase ? s1.toLowerCase() : s1;
-      const finalV2 = ignoreCase ? s2.toLowerCase() : s2;
+      const finalV1 = config.ignoreCase ? s1.toLowerCase() : s1;
+      const finalV2 = config.ignoreCase ? s2.toLowerCase() : s2;
 
       return finalV1 === finalV2;
     };
@@ -733,7 +728,7 @@ export default function App() {
                   </label>
                   <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                     <input type="checkbox" checked={config.trimWhitespace} onChange={(e) => setConfig({ ...config, trimWhitespace: e.target.checked })} className="w-4 h-4 text-indigo-600 rounded border-slate-300" />
-                    <span>Abaikan Spasi Awal & Akhir</span>
+                    <span>Abaikan Spasi Awal & Akhir (Termasuk Spasi Ganda)</span>
                   </label>
                 </div>
               </div>
