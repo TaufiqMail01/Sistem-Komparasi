@@ -50,9 +50,27 @@ export default function App() {
           const sheetsData = {};
           sheetNames.forEach(name => {
             const worksheet = workbook.Sheets[name];
-            const json = XLSX.utils.sheet_to_json(worksheet, { defval: "" }).filter(row => {
+            
+            // 1. Baca sheet secara mentah untuk mendeteksi baris header tabel utama secara otomatis
+            const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+            
+            let headerRowIndex = 0;
+            const keywords = ['NO', 'ID', 'KODE', 'NRK', 'NIP', 'NAMA', 'KARYAWAN', 'NIK'];
+
+            for (let i = 0; i < rawRows.length; i++) {
+              const rowValues = rawRows[i].map(cell => String(cell).trim().toUpperCase());
+              const matchCount = keywords.filter(keyword => rowValues.includes(keyword)).length;
+              if (matchCount > 0) {
+                headerRowIndex = i;
+                break;
+              }
+            }
+
+            // 2. Baca ulang sheet mulai dari baris header yang ditemukan (mengabaikan judul/logo di atasnya)
+            const json = XLSX.utils.sheet_to_json(worksheet, { range: headerRowIndex, defval: "" }).filter(row => {
               return Object.values(row).some(val => val !== "" && val !== null && val !== undefined);
             });
+
             sheetsData[name] = json;
           });
 
@@ -1032,7 +1050,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Footer Bawah Profesional Skripsi (Tanpa Garis Pemisah Atas) */}
+      {/* Footer Bawah Profesional Skripsi */}
       <footer className="bg-slate-900 text-slate-400 border-t border-slate-800 mt-auto py-6">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-1">
           <p className="font-medium text-slate-300 text-xs">
