@@ -102,11 +102,9 @@ export default function App() {
   };
 
   const commonHeaders = useMemo(() => {
-    if (!file1 || !file2) return [];
-    const data1 = file1.sheetsData[sheet1] || [];
-    const data2 = file2.sheetsData[sheet2] || [];
-    const h1 = data1.length > 0 ? Object.keys(data1[0]) : [];
-    const h2 = data2.length > 0 ? Object.keys(data2[0]) : [];
+    if (!file1 && !file2) return [];
+    const h1 = file1 && sheet1 ? (file1.sheetsData[sheet1]?.[0] ? Object.keys(file1.sheetsData[sheet1][0]) : []) : [];
+    const h2 = file2 && sheet2 ? (file2.sheetsData[sheet2]?.[0] ? Object.keys(file2.sheetsData[sheet2][0]) : []) : [];
     const merged = Array.from(new Set([...h1, ...h2]));
     return merged.filter(col => !col.startsWith('__EMPTY'));
   }, [file1, file2, sheet1, sheet2]);
@@ -184,6 +182,64 @@ export default function App() {
   };
 
   const comparisonResult = useMemo(() => {
+    if (operationMode === 'CALCULATE') {
+      const targetFile = file2 || file1;
+      const targetSheet = file2 ? sheet2 : sheet1;
+      if (!targetFile || !targetSheet) return null;
+
+      const data = targetFile.sheetsData[targetSheet] || [];
+      const { primaryKeys, ignoreCase, trimWhitespace } = config;
+
+      const normalizeVal = (val) => {
+        if (val === null || val === undefined) return "";
+        let s = String(val);
+        if (trimWhitespace) s = s.trim();
+        if (ignoreCase) s = s.toLowerCase();
+        return s;
+      };
+
+      const getRowKeyString = (row) => {
+        if (!primaryKeys || primaryKeys.length === 0) return null;
+        const keys = primaryKeys.map(k => normalizeVal(row[k]));
+        if (keys.some(k => k === "")) return null;
+        return keys.join(' | ');
+      };
+
+      let targetColName = "";
+      if (enableFormula && formulaExpr.trim()) {
+        targetColName = formulaTargetColumn === "CUSTOM" ? (customTargetName.trim() || "Kolom_Hasil_Formula") : (formulaTargetColumn || "Hasil_Formula");
+      }
+
+      let allHeaders = commonHeaders;
+      if (targetColName && !allHeaders.includes(targetColName)) {
+        allHeaders = [...allHeaders, targetColName];
+      }
+
+      const results = [];
+      data.forEach((row, idx) => {
+        const cleanRow = {};
+        Object.keys(row).forEach(k => {
+          if (!k.startsWith('__EMPTY')) cleanRow[k] = row[k];
+        });
+
+        if (targetColName && formulaExpr.trim()) {
+          const originalCols = Object.keys(cleanRow);
+          cleanRow[targetColName] = evaluateFormula(cleanRow, formulaExpr, originalCols);
+        }
+
+        const compositeKey = getRowKeyString(cleanRow) || `Baris ${idx + 1}`;
+        results.push({
+          id: `calc-${idx}`,
+          key: compositeKey,
+          status: 'CALCULATED',
+          row2: cleanRow,
+          diffs: {}
+        });
+      });
+
+      return { results, counts: { total: results.length }, headers: allHeaders, targetColName };
+    }
+
     if (!file1 || !file2 || !sheet1 || !sheet2) return null;
 
     const data1 = file1.sheetsData[sheet1] || [];
@@ -214,19 +270,9 @@ export default function App() {
       return normalizeVal(val1) === normalizeVal(val2);
     };
 
-    // Kolom formula hanya aktif jika berada di mode CALCULATE dan formula dinyalakan
-    let targetColName = "";
-    if (operationMode === 'CALCULATE' && enableFormula && formulaExpr.trim()) {
-      targetColName = formulaTargetColumn === "CUSTOM" ? (customTargetName.trim() || "Kolom_Hasil_Formula") : (formulaTargetColumn || "Hasil_Formula");
-    }
-
     let allHeaders = commonHeaders;
-    if (targetColName && !allHeaders.includes(targetColName)) {
-      allHeaders = [...allHeaders, targetColName];
-    }
-
     const activeHeaders = selectedColumns.length > 0 
-      ? allHeaders.filter(h => selectedColumns.includes(h) || h === targetColName)
+      ? allHeaders.filter(h => selectedColumns.includes(h))
       : allHeaders;
 
     const results = [];
@@ -236,43 +282,14 @@ export default function App() {
       if (!row) return null;
       const newRow = {};
       Object.keys(row).forEach(k => {
-        if (!k.startsWith('__EMPTY')) {
-          newRow[k] = row[k];
-        }
+        if (!k.startsWith('__EMPTY')) newRow[k] = row[k];
       });
-      if (targetColName && formulaExpr.trim()) {
-        const originalCols = Object.keys(newRow);
-        newRow[targetColName] = evaluateFormula(newRow, formulaExpr, originalCols);
-      }
       return newRow;
     };
 
     const enrichedData1 = data1.map(enrichRow).filter(row => primaryKeys.length === 0 || getRowKeyString(row) !== null);
     const enrichedData2 = data2.map(enrichRow).filter(row => primaryKeys.length === 0 || getRowKeyString(row) !== null);
 
-    // JIKA MODE 2: KALKULASI / HITUNG RUMUS SAJA
-    if (operationMode === 'CALCULATE') {
-      const maxRows = Math.max(enrichedData1.length, enrichedData2.length);
-      for (let i = 0; i < maxRows; i++) {
-        const row2 = enrichedData2[i] || enrichedData1[i] || null;
-        if (!row2) continue;
-
-        const compositeKey = getRowKeyString(row2) || `Baris ${i + 1}`;
-        results.push({
-          id: `calc-${i}`,
-          key: compositeKey,
-          status: 'CALCULATED',
-          diffCount: targetColName ? 1 : 0,
-          row1: null,
-          row2: row2,
-          diffs: {}
-        });
-      }
-      counts.total = results.length;
-      return { results, counts, headers: activeHeaders, targetColName };
-    }
-
-    // JIKA MODE 1: PENCARIAN PERBEDAAN (COMPARE) - TANPA FORMULA HITUNG
     if (primaryKeys && primaryKeys.length > 0) {
       const map2 = new Map();
       enrichedData2.forEach(row => {
@@ -380,7 +397,7 @@ export default function App() {
     }
 
     counts.total = results.length;
-    return { results, counts, headers: activeHeaders, targetColName };
+    return { results, counts, headers: activeHeaders, targetColName: "" };
   }, [file1, file2, sheet1, sheet2, operationMode, config, enableFormula, formulaExpr, formulaTargetColumn, customTargetName, commonHeaders]);
 
   const filteredResults = useMemo(() => {
@@ -447,7 +464,7 @@ export default function App() {
                             item.status === 'MODIFIED' ? 'Berbeda (Modified)' : 
                             item.status === 'ADDED' ? 'Baru (Added)' : 'Dihapus (Deleted)',
         'Composite Primary Key': item.key,
-        'Letak Kolom diExcel': item.diffCount
+        'Jumlah Kolom Beda': item.diffCount
       };
 
       comparisonResult.headers.forEach(h => {
@@ -478,15 +495,12 @@ export default function App() {
                 <Layers className="w-6 h-6" />
               </div>
               <div>
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30 rounded-full uppercase tracking-wider">
-                    Universal Excel Reconciliation & Calculation
-                  </span>
-                  <span className="text-xs text-slate-400 hidden sm:inline"></span>
-                </div>
                 <h1 className="text-lg md:text-xl font-bold tracking-tight text-white">
-                  Sistem Komparasi & Kalkulasi Data Excel Universal
+                  Sistem Komparasi & Kalkulasi Data Excel
                 </h1>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  Dikembangkan untuk Penelitian Skripsi Program Studi Teknik Informatika &mdash; Universitas Bina Sarana Informatika.
+                </p>
               </div>
             </div>
           </div>
@@ -511,36 +525,35 @@ export default function App() {
             </button>
           </div>
 
-          {/* Pemilih Mode Operasi yang Jelas */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-100 p-2 rounded-2xl">
-            <button
-              onClick={() => { setOperationMode('COMPARE'); setEnableFormula(false); }}
-              className={`flex items-center gap-3 p-3.5 rounded-xl text-left transition-all ${operationMode === 'COMPARE' ? 'bg-white text-indigo-950 font-bold shadow-xs border border-indigo-200' : 'text-slate-600 hover:bg-white/50'}`}
-            >
-              <div className={`p-2 rounded-lg ${operationMode === 'COMPARE' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
-                <ArrowRightLeft className="w-5 h-5" />
-              </div>
-              <div>
-                <span className="text-[10px] block uppercase tracking-wider text-slate-400">Mode 1</span>
-                <span className="text-sm font-bold">Cari Perbedaan / Komparasi File</span>
-              </div>
-            </button>
+          <div className="flex justify-center my-2">
+            <div className="bg-slate-100 p-1.5 rounded-2xl flex items-center gap-1.5 max-w-lg w-full border border-slate-200/80 shadow-inner">
+              <button
+                onClick={() => { setOperationMode('COMPARE'); setEnableFormula(false); }}
+                className={`flex-1 flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 ${
+                  operationMode === 'COMPARE' 
+                    ? 'bg-white text-indigo-950 shadow-md border border-slate-200/60 scale-[1.02]' 
+                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/60'
+                }`}
+              >
+                <ArrowRightLeft className={`w-4 h-4 ${operationMode === 'COMPARE' ? 'text-indigo-600' : 'text-slate-400'}`} />
+                <span>Mode Komparasi File</span>
+              </button>
 
-            <button
-              onClick={() => setOperationMode('CALCULATE')}
-              className={`flex items-center gap-3 p-3.5 rounded-xl text-left transition-all ${operationMode === 'CALCULATE' ? 'bg-white text-emerald-950 font-bold shadow-xs border border-emerald-200' : 'text-slate-600 hover:bg-white/50'}`}
-            >
-              <div className={`p-2 rounded-lg ${operationMode === 'CALCULATE' ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
-                <Calculator className="w-5 h-5" />
-              </div>
-              <div>
-                <span className="text-[10px] block uppercase tracking-wider text-slate-400">Mode 2</span>
-                <span className="text-sm font-bold">Kalkulasi / Hitung Kolom Formula Saja</span>
-              </div>
-            </button>
+              <button
+                onClick={() => setOperationMode('CALCULATE')}
+                className={`flex-1 flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 ${
+                  operationMode === 'CALCULATE' 
+                    ? 'bg-white text-emerald-950 shadow-md border border-slate-200/60 scale-[1.02]' 
+                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/60'
+                }`}
+              >
+                <Calculator className={`w-4 h-4 ${operationMode === 'CALCULATE' ? 'text-emerald-600' : 'text-slate-400'}`} />
+                <span>Mode Kalkulasi Rumus</span>
+              </button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
             <div className="border-2 border-dashed border-slate-200 hover:border-amber-400 bg-slate-50/50 rounded-2xl p-4 transition-all relative group">
               <input type="file" accept=".xlsx, .xls, .csv" onChange={(e) => e.target.files[0] && handleUploadFile1(e.target.files[0])} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
               <div className="flex items-start gap-3">
@@ -548,7 +561,9 @@ export default function App() {
                   <FileSpreadsheet className="w-6 h-6" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">FILE 1 {operationMode === 'CALCULATE' ? '(Opsional / Acuan)' : '(DATA ACUAN / LAMA)'}</span>
+                  <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">
+                    {operationMode === 'CALCULATE' ? 'FILE 1 (OPSIONAL / ACUAN)' : 'FILE 1 (DATA REFERENSI / LAMA)'}
+                  </span>
                   <p className="text-sm font-semibold text-slate-800 truncate mt-0.5">{file1 ? file1.fileName : "Pilih atau drag File 1 ke sini..."}</p>
                   
                   {file1 && (
@@ -570,7 +585,9 @@ export default function App() {
                   <FileSpreadsheet className="w-6 h-6" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block">FILE 2 {operationMode === 'CALCULATE' ? '(Data yang Ingin Dihitung)' : '(DATA PEMBANDING / BARU)'}</span>
+                  <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block">
+                    {operationMode === 'CALCULATE' ? 'FILE 2 (DATA UTAMA YANG DIHITUNG)' : 'FILE 2 (DATA PEMBANDING / BARU)'}
+                  </span>
                   <p className="text-sm font-semibold text-slate-800 truncate mt-0.5">{file2 ? file2.fileName : "Pilih atau drag File 2 ke sini..."}</p>
                   
                   {file2 && (
@@ -587,60 +604,57 @@ export default function App() {
           </div>
         </section>
 
-        {/* Section 2: Parameter & Formula (Hanya tampilkan modul formula jika di Mode CALCULATE) */}
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-5">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
               <Sliders className="w-5 h-5 text-indigo-600" />
-              2. Pengaturan Parameter & Pengaturan Kolom Kunci
+              2. Pengaturan Parameter & Kolom Kunci Acuan
             </h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {operationMode === 'COMPARE' && (
-              <div className="space-y-2 md:col-span-1 flex flex-col">
-                <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
-                  <Key className="w-3.5 h-3.5 text-amber-500" />
-                  Pilih Kolom Kunci Utama (Multi-Select):
-                </label>
+            <div className="space-y-2 md:col-span-1 flex flex-col">
+              <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                <Key className="w-3.5 h-3.5 text-amber-500" />
+                Pilih Kolom Kunci Utama / Primary Key:
+              </label>
 
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-                  <input 
-                    type="text" 
-                    placeholder="Cari nama kolom..." 
-                    value={pkSearchQuery}
-                    onChange={(e) => setPkSearchQuery(e.target.value)}
-                    disabled={!file1 || !file2}
-                    className="w-full bg-slate-50 text-xs text-slate-800 rounded-xl border border-slate-300 pl-8 pr-3 py-1.5 disabled:opacity-50"
-                  />
-                </div>
-
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 h-36 overflow-y-auto space-y-1.5">
-                  {!file1 || !file2 ? (
-                    <p className="text-[11px] text-slate-400 italic">Unggah file terlebih dahulu.</p>
-                  ) : filteredPkHeaders.length === 0 ? (
-                    <p className="text-[11px] text-slate-400 italic">Kolom tidak ditemukan.</p>
-                  ) : (
-                    filteredPkHeaders.map(col => {
-                      const isSelected = config.primaryKeys.includes(col);
-                      return (
-                        <div 
-                          key={col} 
-                          onClick={() => togglePrimaryKey(col)}
-                          className={`flex items-center justify-between p-2 rounded-lg cursor-pointer text-xs transition-colors ${isSelected ? 'bg-indigo-50 border border-indigo-200 text-indigo-900 font-semibold' : 'hover:bg-slate-100 text-slate-700'}`}
-                        >
-                          <span className="truncate">{col}</span>
-                          {isSelected ? <CheckSquare className="w-4 h-4 text-indigo-600 flex-shrink-0 ml-2" /> : <Square className="w-4 h-4 text-slate-300 flex-shrink-0 ml-2" />}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                <input 
+                  type="text" 
+                  placeholder="Cari nama kolom..." 
+                  value={pkSearchQuery}
+                  onChange={(e) => setPkSearchQuery(e.target.value)}
+                  disabled={!file1 && !file2}
+                  className="w-full bg-slate-50 text-xs text-slate-800 rounded-xl border border-slate-300 pl-8 pr-3 py-1.5 disabled:opacity-50"
+                />
               </div>
-            )}
 
-            <div className={`space-y-4 ${operationMode === 'CALCULATE' ? 'md:col-span-2' : 'md:col-span-1'}`}>
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 h-36 overflow-y-auto space-y-1.5">
+                {(!file1 && !file2) ? (
+                  <p className="text-[11px] text-slate-400 italic">Unggah file terlebih dahulu.</p>
+                ) : filteredPkHeaders.length === 0 ? (
+                  <p className="text-[11px] text-slate-400 italic">Kolom tidak ditemukan.</p>
+                ) : (
+                  filteredPkHeaders.map(col => {
+                    const isSelected = config.primaryKeys.includes(col);
+                    return (
+                      <div 
+                        key={col} 
+                        onClick={() => togglePrimaryKey(col)}
+                        className={`flex items-center justify-between p-2 rounded-lg cursor-pointer text-xs transition-colors ${isSelected ? 'bg-indigo-50 border border-indigo-200 text-indigo-900 font-semibold' : 'hover:bg-slate-100 text-slate-700'}`}
+                      >
+                        <span className="truncate">{col}</span>
+                        {isSelected ? <CheckSquare className="w-4 h-4 text-indigo-600 flex-shrink-0 ml-2" /> : <Square className="w-4 h-4 text-slate-300 flex-shrink-0 ml-2" />}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-4 md:col-span-1">
               <div className="space-y-2">
                 <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
                   <Type className="w-3.5 h-3.5 text-indigo-500" />
@@ -664,14 +678,13 @@ export default function App() {
                 <span className="text-xs font-bold text-indigo-900 block mb-1">Status Mode Aktif:</span>
                 <p className="text-[11px] text-indigo-800 leading-relaxed">
                   {operationMode === 'COMPARE' 
-                    ? 'Mode Komparasi Murni: Fokus mencari data Sama, Beda, Baru, atau Dihapus tanpa modul hitung.' 
-                    : 'Mode Kalkulasi: Aktifkan modul formula di bawah untuk menghitung kolom target.'}
+                    ? 'Mode Komparasi File: Fokus membandingkan selisih data Sama, Beda, Baru, atau Dihapus secara presisi.' 
+                    : 'Mode Kalkulasi Rumus: Memproses rumus per baris dengan Primary Key sebagai identitas acuan.'}
                 </p>
               </div>
             </div>
           </div>
 
-          {/* MODUL FORMULA HANYA MUNCUL DI MODE CALCULATE */}
           {operationMode === 'CALCULATE' && (
             <div className="pt-4 border-t border-slate-100 space-y-3 bg-emerald-50/40 p-4 rounded-xl border border-emerald-200">
               <div className="flex items-center justify-between">
@@ -786,13 +799,12 @@ export default function App() {
               <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-2xl flex items-center justify-between">
                 <div>
                   <span className="text-xs font-bold text-emerald-900 uppercase tracking-wider block">Mode Kalkulasi Selesai</span>
-                  <p className="text-xs text-emerald-700 mt-0.5">Berhasil memproses perhitungan untuk total **{comparisonResult.counts.total} baris data**.</p>
+                  <p className="text-xs text-emerald-700 mt-0.5">Berhasil memproses perhitungan untuk total **{comparisonResult.counts.total} baris data** dengan Primary Key sebagai acuan.</p>
                 </div>
                 <div className="text-2xl font-bold text-emerald-700 font-mono">{comparisonResult.counts.total} Baris</div>
               </div>
             )}
 
-            {/* Filter & Ekspor */}
             <div className="flex flex-col lg:flex-row items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-sm">
               {operationMode === 'COMPARE' ? (
                 <div className="flex items-center gap-1.5 overflow-x-auto w-full lg:w-auto">
@@ -857,7 +869,7 @@ export default function App() {
                       </th>
                       {operationMode === 'COMPARE' && <th className="p-3 w-12 text-center">Aksi</th>}
                       {operationMode === 'COMPARE' && <th className="p-3 w-28">Status</th>}
-                      <th className="p-3 w-48">Composite Key</th>
+                      <th className="p-3 w-48">Composite Key (Acuan)</th>
                       {comparisonResult.headers.slice(0, 3).map(h => (
                         <th key={h} className="p-3 min-w-[140px]">{h}</th>
                       ))}
@@ -902,7 +914,7 @@ export default function App() {
                                 {row.status === 'DELETED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-100 text-rose-800"><FileMinus className="w-3.5 h-3.5" /> Hapus</span>}
                               </td>
                             )}
-                            <td className="p-3 font-mono font-medium text-slate-800">{row.key}</td>
+                            <td className="p-3 font-mono font-bold text-indigo-900 bg-slate-50">{row.key}</td>
                             {comparisonResult.headers.slice(0, 3).map(h => {
                               const val = operationMode === 'CALCULATE' 
                                 ? (row.row2 ? row.row2[h] : "") 
@@ -926,7 +938,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Modal Detail Audit */}
       {selectedRowDetail && comparisonResult && operationMode === 'COMPARE' && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-fade-in border border-slate-100">
@@ -992,6 +1003,18 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Footer Bawah Profesional Skripsi (Tanpa Garis Pemisah Atas) */}
+      <footer className="bg-slate-900 text-slate-400 border-t border-slate-800 mt-auto py-6">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-1">
+          <p className="font-medium text-slate-300 text-xs">
+            &copy; {new Date().getFullYear()} <span className="text-indigo-400 font-bold">Taufiq Ismail</span>. All rights reserved.
+          </p>
+          <p className="text-[10px] text-slate-400">
+            Dibangun dengan React.js, Vite, Tailwind CSS, & SheetJS (xlsx).
+          </p>
+        </div>
+      </footer>
     </div>
   );
 }
