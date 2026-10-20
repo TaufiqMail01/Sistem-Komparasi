@@ -81,10 +81,11 @@ export default function App() {
               }
             }
 
-            // 2. Baca ulang sheet mulai dari baris header yang ditemukan
-            const json = XLSX.utils.sheet_to_json(worksheet, { range: headerRowIndex, defval: "" }).filter(row => {
-              return Object.values(row).some(val => val !== "" && val !== null && val !== undefined);
-            });
+            // 2. Baca ulang sheet mulai dari baris header dengan pengamanan array kosong
+            const rawJson = XLSX.utils.sheet_to_json(worksheet, { range: headerRowIndex, defval: "" });
+            const json = Array.isArray(rawJson) ? rawJson.filter(row => {
+              return row && Object.values(row).some(val => val !== "" && val !== null && val !== undefined);
+            }) : [];
 
             sheetsData[name] = json;
           });
