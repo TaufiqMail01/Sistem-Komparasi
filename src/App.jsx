@@ -1,25 +1,27 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import * as pdfjsLib from 'pdfjs-dist';
+import * as Diff from 'diff';
 import { 
-  Upload, FileSpreadsheet, ArrowRightLeft, Download, 
-  Settings, Key, Sliders, Layers, CheckCircle, AlertTriangle, 
-  PlusCircle, MinusCircle, Eye, CheckCircle2, AlertCircle, FilePlus, FileMinus, X, Calculator, Plus, RotateCcw, Database, Type, Binary, CheckSquare, Square, Search, Filter, Target, FileText
+  FileSpreadsheet, ArrowRightLeft, Download, 
+  Key, Sliders, CheckCircle, AlertTriangle, 
+  PlusCircle, MinusCircle, Eye, CheckCircle2, AlertCircle, FilePlus, FileMinus, Calculator, RotateCcw, Database, Type, CheckSquare, Square, Search, Filter, Target, Sparkles
 } from 'lucide-react';
 
-// Konfigurasi Worker PDF.js agar dapat berjalan lancar di browser
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+import Header from './components/Header';
+import WordModule from './components/WordModule';
+import DetailModal from './components/DetailModal';
+import { readFileData, readWordData, formatCellValue, parseIndonesianNumber } from './utils/fileHelpers';
 
 export default function App() {
+  const [darkMode, setDarkMode] = useState(true);
+  const [appMode, setAppMode] = useState('EXCEL');
+
   const [file1, setFile1] = useState(null);
   const [file2, setFile2] = useState(null);
-
   const [sheet1, setSheet1] = useState('');
   const [sheet2, setSheet2] = useState('');
 
-  // Mode Operasi: 'COMPARE' (Mencari Perbedaan) atau 'CALCULATE' (Hitung Rumus Saja)
   const [operationMode, setOperationMode] = useState('COMPARE');
-
   const [config, setConfig] = useState({
     primaryKeys: [],
     ignoreCase: true,
@@ -29,8 +31,6 @@ export default function App() {
   });
 
   const [pkSearchQuery, setPkSearchQuery] = useState('');
-  
-  // State Formula & Pencarian Kolom Formula
   const [enableFormula, setEnableFormula] = useState(false);
   const [formulaTargetColumn, setFormulaTargetColumn] = useState('');
   const [customTargetName, setCustomTargetName] = useState('');
@@ -42,152 +42,68 @@ export default function App() {
   const [selectedRowDetail, setSelectedRowDetail] = useState(null);
   const [selectedRowIds, setSelectedRowIds] = useState([]);
 
-  // Helper untuk memparsing angka dengan format desimal Indonesia (koma / titik ribuan)
-  const parseIndonesianNumber = (val) => {
-    if (val === null || val === undefined || val === "") return NaN;
-    if (typeof val === 'number') return val;
-    let s = String(val).trim();
-    s = s.replace(/Rp\.?/gi, '').trim(); // Hilangkan teks Rp jika ada
-    if (s.includes(',') && s.includes('.')) {
-      s = s.replace(/\./g, '').replace(',', '.');
-    } else if (s.includes(',')) {
-      s = s.replace(',', '.');
-    }
-    const num = Number(s);
-    return isNaN(num) ? NaN : num;
-  };
-
-  // Fungsi Parser khusus untuk mengekstrak data tabel dari file PDF laporan
-  const readPdfData = async (file) => {
-    const arrayBuffer = await file.arrayBuffer();
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-    const pdfDoc = await loadingTask.promise;
-    
-    let allRows = [];
-    const keywords = ['NO', 'ID', 'KODE', 'NRK', 'NIP', 'NAMA', 'KARYAWAN', 'NIK', 'EMPLOYEE', 'NAMA LENGKAP'];
-
-    for (let i = 1; i <= pdfDoc.numPages; i++) {
-      const page = await pdfDoc.getPage(i);
-      const textContent = await page.getTextContent();
-      
-      let rowsMap = {};
-      textContent.items.forEach(item => {
-        const yCoord = Math.round(item.transform[5] / 8) * 8; 
-        if (!rowsMap[yCoord]) rowsMap[yCoord] = [];
-        rowsMap[yCoord].push({ x: item.transform[4], text: item.str.trim() });
-      });
-
-      const sortedY = Object.keys(rowsMap).sort((a, b) => Number(b) - Number(a));
-      sortedY.forEach(y => {
-        const rowItems = rowsMap[y].sort((a, b) => a.x - b.x);
-        const rowValues = rowItems.map(r => r.text).filter(t => t !== "");
-        if (rowValues.length > 0) {
-          allRows.push(rowValues);
-        }
-      });
-    }
-
-    if (allRows.length === 0) {
-      throw new Error("Tidak ada teks yang dapat diekstrak dari file PDF.");
-    }
-
-    let headerRowIndex = 0;
-    for (let i = 0; i < allRows.length; i++) {
-      const rowUpper = allRows[i].map(cell => cell.toUpperCase());
-      const matchCount = keywords.filter(kw => rowUpper.includes(kw)).length;
-      if (matchCount > 0) {
-        headerRowIndex = i;
-        break;
-      }
-    }
-
-    const headers = allRows[headerRowIndex] || ['Kolom_1', 'Kolom_2', 'Kolom_3'];
-    const dataRows = allRows.slice(headerRowIndex + 1);
-
-    const json = dataRows.map(row => {
-      let obj = {};
-      headers.forEach((h, idx) => {
-        obj[h] = row[idx] !== undefined ? row[idx] : "";
-      });
-      return obj;
-    }).filter(row => Object.values(row).some(val => val !== ""));
-
-    const sheetName = "Data_PDF";
-    const sheetsData = { [sheetName]: json };
-
-    return { sheetNames: [sheetName], sheetsData };
-  };
-
-  const readFileData = (file) => {
-    return new Promise((resolve, reject) => {
-      const fileName = file.name.toLowerCase();
-      
-      if (fileName.endsWith('.pdf')) {
-        readPdfData(file)
-          .then(res => resolve(res))
-          .catch(err => reject(err));
-        return;
-      }
-
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const data = new Uint8Array(e.target.result);
-          const workbook = XLSX.read(data, { type: 'array', cellDates: true });
-          const sheetNames = workbook.SheetNames;
-          
-          const sheetsData = {};
-          sheetNames.forEach(name => {
-            const worksheet = workbook.Sheets[name];
-            const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
-            
-            let headerRowIndex = 0;
-            const keywords = ['NO', 'ID', 'KODE', 'NRK', 'NIP', 'NAMA', 'KARYAWAN', 'NIK', 'EMPLOYEE', 'NAMA LENGKAP'];
-
-            for (let i = 0; i < rawRows.length; i++) {
-              const rowValues = rawRows[i].map(cell => String(cell).trim().toUpperCase());
-              const matchCount = keywords.filter(keyword => rowValues.includes(keyword)).length;
-              if (matchCount > 0) {
-                headerRowIndex = i;
-                break;
-              }
-            }
-
-            const rawJson = XLSX.utils.sheet_to_json(worksheet, { range: headerRowIndex, defval: "" });
-            const json = Array.isArray(rawJson) ? rawJson.filter(row => {
-              return row && Object.values(row).some(val => val !== "" && val !== null && val !== undefined);
-            }) : [];
-
-            sheetsData[name] = json;
-          });
-
-          resolve({ workbook, sheetNames, sheetsData });
-        } catch (err) {
-          reject(err);
-        }
-      };
-      reader.onerror = (error) => reject(error);
-      reader.readAsArrayBuffer(file);
-    });
-  };
+  const [wordFile1, setWordFile1] = useState(null);
+  const [wordFile2, setWordFile2] = useState(null);
+  const [wordText1, setWordText1] = useState('');
+  const [wordText2, setWordText2] = useState('');
 
   const handleUploadFile1 = async (file) => {
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith('.xlsx') && !fileName.endsWith('.xls') && !fileName.endsWith('.csv')) {
+      alert("⚠️ Peringatan: Format file tidak sesuai! Mohon unggah file berformat Excel (.xlsx, .xls) atau CSV.");
+      return;
+    }
     try {
       const res = await readFileData(file);
       setFile1({ fileName: file.name, ...res });
       setSheet1(res.sheetNames[0]);
     } catch (err) {
-      alert("Gagal membaca File 1. Pastikan file berformat Excel, CSV, atau PDF valid.");
+      alert("Gagal membaca File 1. Pastikan file Excel valid.");
     }
   };
 
   const handleUploadFile2 = async (file) => {
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith('.xlsx') && !fileName.endsWith('.xls') && !fileName.endsWith('.csv')) {
+      alert("⚠️ Peringatan: Format file tidak sesuai! Mohon unggah file berformat Excel (.xlsx, .xls) atau CSV.");
+      return;
+    }
     try {
       const res = await readFileData(file);
       setFile2({ fileName: file.name, ...res });
       setSheet2(res.sheetNames[0]);
     } catch (err) {
-      alert("Gagal membaca File 2. Pastikan file berformat Excel, CSV, atau PDF valid.");
+      alert("Gagal membaca File 2. Pastikan file Excel valid.");
+    }
+  };
+
+  const handleUploadWord1 = async (file) => {
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith('.docx')) {
+      alert("⚠️ Peringatan: Format file tidak sesuai! Mohon unggah dokumen Word berformat .docx.");
+      return;
+    }
+    try {
+      const text = await readWordData(file);
+      setWordFile1({ fileName: file.name });
+      setWordText1(text);
+    } catch (err) {
+      alert("Gagal membaca Dokumen Word 1.");
+    }
+  };
+
+  const handleUploadWord2 = async (file) => {
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith('.docx')) {
+      alert("⚠️ Peringatan: Format file tidak sesuai! Mohon unggah dokumen Word berformat .docx.");
+      return;
+    }
+    try {
+      const text = await readWordData(file);
+      setWordFile2({ fileName: file.name });
+      setWordText2(text);
+    } catch (err) {
+      alert("Gagal membaca Dokumen Word 2.");
     }
   };
 
@@ -206,6 +122,10 @@ export default function App() {
     setPkSearchQuery('');
     setNameSearchFilter('');
     setSelectedRowIds([]);
+    setWordFile1(null);
+    setWordFile2(null);
+    setWordText1('');
+    setWordText2('');
   };
 
   const commonHeaders = useMemo(() => {
@@ -216,18 +136,15 @@ export default function App() {
     return merged.filter(col => !col.startsWith('__EMPTY'));
   }, [file1, file2, sheet1, sheet2]);
 
-  // LOGIKA AUTO-DETECT PRIMARY KEY OTOMATIS
   useEffect(() => {
     if (commonHeaders.length > 0 && config.primaryKeys.length === 0) {
       const pkKeywords = ['nik', 'nip', 'nrk', 'id', 'kode', 'no', 'employee', 'nomor'];
       const foundKey = commonHeaders.find(h => 
         pkKeywords.some(kw => h.toLowerCase() === kw || h.toLowerCase().includes(kw))
       );
-      
       if (foundKey) {
         setConfig(prev => ({ ...prev, primaryKeys: [foundKey] }));
       } else if (commonHeaders.length > 0) {
-        // Fallback ke kolom pertama jika keyword tidak ada
         setConfig(prev => ({ ...prev, primaryKeys: [commonHeaders[0]] }));
       }
     }
@@ -277,62 +194,6 @@ export default function App() {
     } catch (e) {
       return "Error Rumus";
     }
-  };
-
-  const formatCellValue = (headerName, val) => {
-    if (val === null || val === undefined || val === "") return "-";
-    
-    const lowerHeader = headerName.toLowerCase();
-    const excludeCurrencyKeywords = ['no', 'nomor', 'nik', 'nrk', 'kode', 'id', 'telp', 'phone', 'npwp', 'rekening'];
-    const isExcludedFromCurrency = excludeCurrencyKeywords.some(keyword => {
-      const regex = new RegExp(`(^|[^a-z])${keyword}([^a-z]|$)`, 'i');
-      return regex.test(lowerHeader);
-    });
-
-    if (isExcludedFromCurrency) {
-      return String(val);
-    }
-
-    const currencyKeywords = [
-      'gaji', 'tunjangan', 'potongan', 'bonus', 'insentif', 'lembur', 'thr', 
-      'bruto', 'thp', 'total', 'bayar', 'umk', 'penalty', 'kompensasi', 
-      'pajak', 'pph', 'nominal', 'jumlah', 'harga', 'biaya', 'rp', 'saltab', 'hasil_formula', 'iuran',
-      'overtime', 'jht', 'jkatan', 'jp', 'kesehatan', 'jkk', 'jkm', 'jshk', 'disnaker', 'fix allowance', 'ter max', 'ter min'
-    ];
-    const isCurrency = currencyKeywords.some(keyword => lowerHeader.includes(keyword));
-
-    const numVal = parseIndonesianNumber(val);
-    if (isCurrency && !isNaN(numVal) && typeof val !== 'boolean') {
-      return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(numVal);
-    }
-
-    const dateKeywords = ['tanggal', 'date', 'tgl', 'start', 'end', 'join', 'expired', 'lahir'];
-    const isDateHeader = dateKeywords.some(keyword => lowerHeader.includes(keyword));
-
-    if (isDateHeader) {
-      if (val instanceof Date) {
-        const d = String(val.getDate()).padStart(2, '0');
-        const m = String(val.getMonth() + 1).padStart(2, '0');
-        const y = val.getFullYear();
-        return `${d}-${m}-${y}`;
-      }
-      if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val)) {
-        const parts = val.split('T')[0].split('-');
-        if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
-      }
-      if (typeof val === 'number' && val > 30000 && val < 60000) {
-        const utc_days = Math.floor(val - 25569);
-        const utc_value = utc_days * 86400;
-        const dateInfo = new Date(utc_value * 1000);
-        const d = String(dateInfo.getUTCDate()).padStart(2, '0');
-        const m = String(dateInfo.getUTCMonth() + 1).padStart(2, '0');
-        const y = dateInfo.getUTCFullYear();
-        return `${d}-${m}-${y}`;
-      }
-    }
-
-    if (typeof val === 'object') return JSON.stringify(val);
-    return String(val);
   };
 
   const comparisonResult = useMemo(() => {
@@ -640,554 +501,527 @@ export default function App() {
     XLSX.writeFile(workbook, `Laporan${suffix}.xlsx`);
   };
 
+  const wordDiffResult = useMemo(() => {
+    if (!wordText1 && !wordText2) return null;
+    return Diff.diffWordsWithSpace(wordText1, wordText2);
+  }, [wordText1, wordText2]);
+
   return (
-    <div className="bg-slate-50 text-slate-800 font-sans antialiased min-h-screen flex flex-col">
-      <header className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white border-b border-slate-800 sticky top-0 z-30 shadow-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-blue-600/30 rounded-xl border border-blue-400/30 text-blue-400">
-                <Layers className="w-6 h-6" />
-              </div>
-              <div>
-                <h1 className="text-lg md:text-xl font-bold tracking-tight text-white">
-                  Sistem Komparasi & Kalkulasi Data Excel & PDF
-                </h1>
-                <p className="text-xs text-slate-300 mt-0.5">
-                  Dikembangkan untuk Penelitian Skripsi Program Studi Teknik Informatika &mdash; Universitas Bina Sarana Informatika.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </header>
+    <div className={`min-h-screen flex flex-col font-sans antialiased transition-all duration-300 ${darkMode ? 'bg-slate-950 text-slate-100 selection:bg-indigo-500 selection:text-white' : 'bg-slate-50/80 text-slate-800 selection:bg-indigo-600 selection:text-white'}`}>
+      
+      <Header 
+        appMode={appMode} 
+        setAppMode={setAppMode} 
+        darkMode={darkMode} 
+        setDarkMode={setDarkMode} 
+      />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-5">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-            <div>
-              <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
-                <FileSpreadsheet className="w-5 h-5 text-blue-600" />
-                1. Pilih Mode Kerja & Unggah File (Excel / CSV / PDF)
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Pilih apakah Anda ingin murni **Mencari Perbedaan** antar file atau melakukan **Kalkulasi/Hitung Rumus**. Primary Key terdeteksi otomatis.
-              </p>
-            </div>
-            <button onClick={resetAllData} className="text-xs font-medium text-slate-500 hover:text-rose-600 flex items-center gap-1 self-start md:self-auto px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors">
-              <RotateCcw className="w-3.5 h-3.5" />
-              Reset File & Data
-            </button>
-          </div>
-
-          <div className="flex justify-center my-2">
-            <div className="bg-slate-100 p-1.5 rounded-2xl flex items-center gap-1.5 max-w-lg w-full border border-slate-200/80 shadow-inner">
-              <button
-                onClick={() => { setOperationMode('COMPARE'); setEnableFormula(false); }}
-                className={`flex-1 flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 ${
-                  operationMode === 'COMPARE' 
-                    ? 'bg-white text-indigo-950 shadow-md border border-slate-200/60 scale-[1.02]' 
-                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/60'
-                }`}
-              >
-                <ArrowRightLeft className={`w-4 h-4 ${operationMode === 'COMPARE' ? 'text-indigo-600' : 'text-slate-400'}`} />
-                <span>Mode Komparasi File</span>
-              </button>
-
-              <button
-                onClick={() => setOperationMode('CALCULATE')}
-                className={`flex-1 flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 ${
-                  operationMode === 'CALCULATE' 
-                    ? 'bg-white text-emerald-950 shadow-md border border-slate-200/60 scale-[1.02]' 
-                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/60'
-                }`}
-              >
-                <Calculator className={`w-4 h-4 ${operationMode === 'CALCULATE' ? 'text-emerald-600' : 'text-slate-400'}`} />
-                <span>Mode Kalkulasi Rumus</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-            <div className="border-2 border-dashed border-slate-200 hover:border-amber-400 bg-slate-50/50 rounded-2xl p-4 transition-all relative group">
-              <input type="file" accept=".xlsx, .xls, .csv, .pdf" onChange={(e) => e.target.files[0] && handleUploadFile1(e.target.files[0])} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-              <div className="flex items-start gap-3">
-                <div className="p-3 bg-amber-100 text-amber-700 rounded-xl flex-shrink-0">
-                  <FileText className="w-6 h-6" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">
-                    {operationMode === 'CALCULATE' ? 'FILE 1 (OPSIONAL / ACUAN)' : 'FILE 1 (DATA REFERENSI / LAMA - EXCEL/PDF)'}
-                  </span>
-                  <p className="text-sm font-semibold text-slate-800 truncate mt-0.5">{file1 ? file1.fileName : "Pilih atau drag File 1 ke sini..."}</p>
-                  
-                  {file1 && (
-                    <div className="mt-2.5 relative z-20">
-                      <label className="text-[11px] font-medium text-slate-600 block mb-1">Pilih Sheet / Halaman:</label>
-                      <select value={sheet1} onChange={(e) => setSheet1(e.target.value)} className="w-full bg-white text-xs border border-slate-300 rounded-lg px-2.5 py-1.5">
-                        {file1.sheetNames.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
+        
+        {appMode === 'EXCEL' && (
+          <>
+            <section className={`rounded-3xl border shadow-sm p-6 space-y-6 transition-all ${darkMode ? 'bg-slate-900/90 border-slate-800 shadow-xl shadow-black/10' : 'bg-white border-slate-200/90 shadow-sm'}`}>
+              <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b ${darkMode ? 'border-slate-800' : 'border-slate-100'}`}>
+                <div>
+                  <h2 className="text-base font-bold flex items-center gap-2">
+                    <div className="p-1.5 bg-blue-500/10 text-blue-500 rounded-xl">
+                      <FileSpreadsheet className="w-4 h-4" />
                     </div>
-                  )}
+                    Pilih Mode Operasi & Unggah Dokumen Target
+                  </h2>
+                  <p className={`text-xs mt-0.5 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                    Unggah dokumen laporan Anda (Excel atau CSV) untuk dikomparasi atau dikalkulasi otomatis.
+                  </p>
+                </div>
+                <button 
+                  onClick={resetAllData} 
+                  className={`text-xs font-semibold flex items-center gap-1.5 px-3.5 py-2 rounded-xl border transition-all ${
+                    darkMode 
+                      ? 'border-slate-700 hover:bg-slate-800 text-slate-300' 
+                      : 'border-slate-200 hover:bg-rose-50 hover:border-rose-200 text-slate-600 hover:text-rose-600'
+                  }`}
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Reset Seluruh Data
+                </button>
+              </div>
+
+              <div className="flex justify-center my-2">
+                <div className={`p-1.5 rounded-2xl flex items-center gap-1.5 max-w-md w-full border shadow-inner ${darkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200/80'}`}>
+                  <button
+                    onClick={() => { setOperationMode('COMPARE'); setEnableFormula(false); }}
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 ${
+                      operationMode === 'COMPARE' 
+                        ? (darkMode ? 'bg-slate-800 text-white shadow-md border border-slate-700' : 'bg-white text-indigo-950 shadow-md border border-slate-200/60 scale-[1.02]') 
+                        : (darkMode ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-800')
+                    }`}
+                  >
+                    <ArrowRightLeft className={`w-4 h-4 ${operationMode === 'COMPARE' ? 'text-indigo-500' : 'text-slate-400'}`} />
+                    <span>Komparasi File</span>
+                  </button>
+
+                  <button
+                    onClick={() => setOperationMode('CALCULATE')}
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 ${
+                      operationMode === 'CALCULATE' 
+                        ? (darkMode ? 'bg-slate-800 text-white shadow-md border border-slate-700' : 'bg-white text-emerald-950 shadow-md border border-slate-200/60 scale-[1.02]') 
+                        : (darkMode ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-800')
+                    }`}
+                  >
+                    <Calculator className={`w-4 h-4 ${operationMode === 'CALCULATE' ? 'text-emerald-500' : 'text-slate-400'}`} />
+                    <span>Kalkulasi Rumus</span>
+                  </button>
                 </div>
               </div>
-            </div>
 
-            <div className="border-2 border-dashed border-slate-200 hover:border-blue-400 bg-slate-50/50 rounded-2xl p-4 transition-all relative group">
-              <input type="file" accept=".xlsx, .xls, .csv, .pdf" onChange={(e) => e.target.files[0] && handleUploadFile2(e.target.files[0])} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-              <div className="flex items-start gap-3">
-                <div className="p-3 bg-blue-100 text-blue-700 rounded-xl flex-shrink-0">
-                  <FileText className="w-6 h-6" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block">
-                    {operationMode === 'CALCULATE' ? 'FILE 2 (DATA UTAMA YANG DIHITUNG)' : 'FILE 2 (DATA PEMBANDING / BARU - EXCEL/PDF)'}
-                  </span>
-                  <p className="text-sm font-semibold text-slate-800 truncate mt-0.5">{file2 ? file2.fileName : "Pilih atau drag File 2 ke sini..."}</p>
-                  
-                  {file2 && (
-                    <div className="mt-2.5 relative z-20">
-                      <label className="text-[11px] font-medium text-slate-600 block mb-1">Pilih Sheet / Halaman:</label>
-                      <select value={sheet2} onChange={(e) => setSheet2(e.target.value)} className="w-full bg-white text-xs border border-slate-300 rounded-lg px-2.5 py-1.5">
-                        {file2.sheetNames.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2">
+                <div className={`border-2 border-dashed rounded-3xl p-5 transition-all relative group overflow-hidden ${darkMode ? 'border-slate-800 bg-slate-950/40 hover:border-amber-500/50' : 'border-slate-200 bg-slate-50/50 hover:border-amber-400 hover:bg-amber-50/20'}`}>
+                  <input type="file" accept=".xlsx, .xls, .csv" onChange={(e) => e.target.files[0] && handleUploadFile1(e.target.files[0])} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                  <div className="flex items-start gap-4">
+                    <div className="p-3.5 bg-amber-500/10 text-amber-500 rounded-2xl flex-shrink-0 group-hover:scale-110 transition-transform">
+                      <FileSpreadsheet className="w-6 h-6" />
                     </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-5">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
-              <Sliders className="w-5 h-5 text-indigo-600" />
-              2. Pengaturan Parameter & Kolom Kunci Acuan (Auto-Detect)
-            </h2>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            <div className="space-y-2 md:col-span-1 flex flex-col">
-              <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
-                <Key className="w-3.5 h-3.5 text-amber-500" />
-                Pilih Kolom Kunci Utama / Primary Key:
-              </label>
-
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-                <input 
-                  type="text" 
-                  placeholder="Cari nama kolom..." 
-                  value={pkSearchQuery}
-                  onChange={(e) => setPkSearchQuery(e.target.value)}
-                  disabled={!file1 && !file2}
-                  className="w-full bg-slate-50 text-xs text-slate-800 rounded-xl border border-slate-300 pl-8 pr-3 py-1.5 disabled:opacity-50"
-                />
-              </div>
-
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 h-36 overflow-y-auto space-y-1.5">
-                {(!file1 && !file2) ? (
-                  <p className="text-[11px] text-slate-400 italic">Unggah file terlebih dahulu.</p>
-                ) : filteredPkHeaders.length === 0 ? (
-                  <p className="text-[11px] text-slate-400 italic">Kolom tidak ditemukan.</p>
-                ) : (
-                  filteredPkHeaders.map(col => {
-                    const isSelected = config.primaryKeys.includes(col);
-                    return (
-                      <div 
-                        key={col} 
-                        onClick={() => togglePrimaryKey(col)}
-                        className={`flex items-center justify-between p-2 rounded-lg cursor-pointer text-xs transition-colors ${isSelected ? 'bg-indigo-50 border border-indigo-200 text-indigo-900 font-semibold' : 'hover:bg-slate-100 text-slate-700'}`}
-                      >
-                        <span className="truncate">{col}</span>
-                        {isSelected ? <CheckSquare className="w-4 h-4 text-indigo-600 flex-shrink-0 ml-2" /> : <Square className="w-4 h-4 text-slate-300 flex-shrink-0 ml-2" />}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-4 md:col-span-1">
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
-                  <Type className="w-3.5 h-3.5 text-indigo-500" />
-                  Aturan Pemrosesan Teks & Toleransi:
-                </label>
-                <div className="space-y-2 pt-0.5">
-                  <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                    <input type="checkbox" checked={config.ignoreCase} onChange={(e) => setConfig({ ...config, ignoreCase: e.target.checked })} className="w-4 h-4 text-indigo-600 rounded border-slate-300" />
-                    <span>Abaikan Kapitalisasi (Case-Insensitive)</span>
-                  </label>
-                  <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                    <input type="checkbox" checked={config.trimWhitespace} onChange={(e) => setConfig({ ...config, trimWhitespace: e.target.checked })} className="w-4 h-4 text-indigo-600 rounded border-slate-300" />
-                    <span>Abaikan Spasi Awal & Akhir (Termasuk Spasi Ganda)</span>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-1.5 md:col-span-1 bg-indigo-50/50 border border-indigo-200/60 p-4 rounded-xl flex flex-col justify-between">
-              <div>
-                <span className="text-xs font-bold text-indigo-900 block mb-1">Status Mode Aktif:</span>
-                <p className="text-[11px] text-indigo-800 leading-relaxed">
-                  {operationMode === 'COMPARE' 
-                    ? 'Mode Komparasi File: Fokus membandingkan selisih data Sama, Beda, Baru, atau Dihapus secara presisi.' 
-                    : 'Mode Kalkulasi Rumus: Memproses rumus per baris dengan Primary Key sebagai identitas acuan.'}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {operationMode === 'CALCULATE' && (
-            <div className="pt-4 border-t border-slate-100 space-y-3 bg-emerald-50/40 p-4 rounded-xl border border-emerald-200">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
-                  <Target className="w-4 h-4 text-emerald-600" />
-                  Modul Kalkulasi Rumus & Pengisian Kolom Target:
-                </label>
-                <label className="flex items-center gap-2 text-xs text-emerald-900 font-medium cursor-pointer">
-                  <input type="checkbox" checked={enableFormula} onChange={(e) => setEnableFormula(e.target.checked)} className="w-4 h-4 text-emerald-600 rounded border-emerald-300" />
-                  <span>Aktifkan Rumus Kalkulasi</span>
-                </label>
-              </div>
-
-              {enableFormula && (
-                <div className="space-y-3 animate-fade-in pt-1">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-semibold text-slate-700 block mb-1">Pilih Kolom Tujuan (Target Kolom yang Ingin Diisi):</label>
-                      <select 
-                        value={formulaTargetColumn} 
-                        onChange={(e) => setFormulaTargetColumn(e.target.value)} 
-                        className="w-full bg-white text-xs border border-emerald-300 rounded-xl px-3 py-2"
-                      >
-                        <option value="">-- Buat Kolom Baru Otomatis (Hasil_Formula) --</option>
-                        {commonHeaders.map(col => (
-                          <option key={col} value={col}>Timpa / Isi Kolom: {col}</option>
-                        ))}
-                        <option value="CUSTOM">+ Buat Nama Kolom Baru Lainnya...</option>
-                      </select>
-                    </div>
-
-                    {formulaTargetColumn === 'CUSTOM' && (
-                      <div>
-                        <label className="text-xs font-semibold text-slate-700 block mb-1">Ketik Nama Kolom Baru:</label>
-                        <input 
-                          type="text" 
-                          placeholder="Contoh: Total_Take_Home_Pay" 
-                          value={customTargetName} 
-                          onChange={(e) => setCustomTargetName(e.target.value)} 
-                          className="w-full bg-white text-xs border border-emerald-300 rounded-xl px-3 py-2"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-semibold text-slate-700 block mb-1">Rumus Kalkulasi (Gunakan Kurung Siku `[...]`):</label>
-                    <input type="text" placeholder="Contoh: [Gaji_Pokok] + [Tunjangan] - [Potongan]" value={formulaExpr} onChange={(e) => setFormulaExpr(e.target.value)} className="w-full bg-white text-xs font-mono text-slate-800 rounded-xl border border-emerald-300 px-3.5 py-2.5 shadow-sm" />
-                  </div>
-
-                  <div>
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-1.5">
-                      <span className="text-[11px] font-semibold text-slate-600">Klik nama kolom untuk menyisipkan ke rumus:</span>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-[10px] font-bold text-amber-500 uppercase tracking-widest block mb-1">
+                        {operationMode === 'CALCULATE' ? 'FILE 1 (OPSIONAL / ACUAN)' : 'FILE 1 (DATA REFERENSI / LAMA)'}
+                      </span>
+                      <p className={`text-sm font-semibold truncate ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>{file1 ? file1.fileName : "Klik atau seret file Excel/CSV..."}</p>
                       
-                      <div className="relative w-full sm:w-64">
-                        <Search className="w-3 h-3 text-slate-400 absolute left-2.5 top-2" />
-                        <input 
-                          type="text" 
-                          placeholder="Cari kolom rumus..." 
-                          value={formulaColumnSearch}
-                          onChange={(e) => setFormulaColumnSearch(e.target.value)}
-                          className="w-full bg-white text-[11px] text-slate-800 rounded-lg border border-emerald-300 pl-7 pr-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        />
-                        {formulaColumnSearch && (
-                          <button onClick={() => setFormulaColumnSearch('')} className="absolute right-2 top-1.5 text-slate-400 hover:text-slate-600 text-xs font-bold">×</button>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-2 bg-white/60 border border-emerald-200 rounded-xl">
-                      {filteredFormulaHeaders.length === 0 ? (
-                        <p className="text-[11px] text-slate-400 italic p-1">Kolom tidak ditemukan.</p>
-                      ) : (
-                        filteredFormulaHeaders.map(col => (
-                          <button key={col} onClick={() => insertColumnTagToFormula(col)} className="px-2.5 py-1 bg-white border border-slate-300 text-xs rounded-lg hover:border-emerald-600 hover:bg-emerald-50 font-mono transition-colors shadow-2xs">
-                            +{col}
-                          </button>
-                        ))
+                      {file1 && (
+                        <div className="mt-3 relative z-20 animate-fade-in">
+                          <label className={`text-[11px] font-medium block mb-1 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Pilih Lembar Sheet:</label>
+                          <select value={sheet1} onChange={(e) => setSheet1(e.target.value)} className={`w-full text-xs border rounded-xl px-3 py-2 font-medium ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-300'}`}>
+                            {file1.sheetNames.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        </div>
                       )}
                     </div>
                   </div>
                 </div>
-              )}
-            </div>
-          )}
-        </section>
 
-        {comparisonResult && (
-          <section className="space-y-4">
-            {operationMode === 'COMPARE' ? (
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
-                  <div className="flex items-center justify-between text-slate-500">
-                    <span className="text-[11px] font-bold uppercase tracking-wider">Total Record</span>
-                    <Database className="w-4 h-4 text-slate-400" />
+                <div className={`border-2 border-dashed rounded-3xl p-5 transition-all relative group overflow-hidden ${darkMode ? 'border-slate-800 bg-slate-950/40 hover:border-blue-500/50' : 'border-slate-200 bg-slate-50/50 hover:border-blue-400 hover:bg-blue-50/20'}`}>
+                  <input type="file" accept=".xlsx, .xls, .csv" onChange={(e) => e.target.files[0] && handleUploadFile2(e.target.files[0])} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                  <div className="flex items-start gap-4">
+                    <div className="p-3.5 bg-blue-500/10 text-blue-500 rounded-2xl flex-shrink-0 group-hover:scale-110 transition-transform">
+                      <FileSpreadsheet className="w-6 h-6" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest block mb-1">
+                        {operationMode === 'CALCULATE' ? 'FILE 2 (DATA UTAMA YANG DIHITUNG)' : 'FILE 2 (DATA PEMBANDING / BARU)'}
+                      </span>
+                      <p className={`text-sm font-semibold truncate ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>{file2 ? file2.fileName : "Klik atau seret file Excel/CSV..."}</p>
+                      
+                      {file2 && (
+                        <div className="mt-3 relative z-20 animate-fade-in">
+                          <label className={`text-[11px] font-medium block mb-1 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Pilih Lembar Sheet:</label>
+                          <select value={sheet2} onChange={(e) => setSheet2(e.target.value)} className={`w-full text-xs border rounded-xl px-3 py-2 font-medium ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-300'}`}>
+                            {file2.sheetNames.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="mt-2"><div className="text-2xl font-bold text-slate-900">{comparisonResult.counts.total}</div></div>
-                </div>
-
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
-                  <div className="flex items-center justify-between text-emerald-600">
-                    <span className="text-[11px] font-bold uppercase tracking-wider">Sama (Identik)</span>
-                    <CheckCircle className="w-4 h-4" />
-                  </div>
-                  <div className="mt-2"><div className="text-2xl font-bold text-emerald-600">{comparisonResult.counts.matched}</div></div>
-                </div>
-
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
-                  <div className="flex items-center justify-between text-amber-600">
-                    <span className="text-[11px] font-bold uppercase tracking-wider">Perbedaan</span>
-                    <AlertTriangle className="w-4 h-4" />
-                  </div>
-                  <div className="mt-2"><div className="text-2xl font-bold text-amber-600">{comparisonResult.counts.modified}</div></div>
-                </div>
-
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
-                  <div className="flex items-center justify-between text-blue-600">
-                    <span className="text-[11px] font-bold uppercase tracking-wider">Baru</span>
-                    <PlusCircle className="w-4 h-4" />
-                  </div>
-                  <div className="mt-2"><div className="text-2xl font-bold text-blue-600">{comparisonResult.counts.added}</div></div>
-                </div>
-
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm col-span-2 md:col-span-1 flex flex-col justify-between">
-                  <div className="flex items-center justify-between text-rose-600">
-                    <span className="text-[11px] font-bold uppercase tracking-wider">Dihapus</span>
-                    <MinusCircle className="w-4 h-4" />
-                  </div>
-                  <div className="mt-2"><div className="text-2xl font-bold text-rose-600">{comparisonResult.counts.deleted}</div></div>
                 </div>
               </div>
-            ) : (
-              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-2xl flex items-center justify-between">
-                <div>
-                  <span className="text-xs font-bold text-emerald-900 uppercase tracking-wider block">Mode Kalkulasi Selesai</span>
-                  <p className="text-xs text-emerald-700 mt-0.5">Berhasil memproses perhitungan untuk total **{comparisonResult.counts.total} baris data** dengan Primary Key sebagai acuan.</p>
-                </div>
-                <div className="text-2xl font-bold text-emerald-700 font-mono">{comparisonResult.counts.total} Baris</div>
+            </section>
+
+            <section className={`rounded-3xl border shadow-sm p-6 space-y-6 transition-all ${darkMode ? 'bg-slate-900/90 border-slate-800 shadow-xl shadow-black/10' : 'bg-white border-slate-200/90 shadow-sm'}`}>
+              <div className={`flex items-center justify-between pb-4 border-b ${darkMode ? 'border-slate-800' : 'border-slate-100'}`}>
+                <h2 className="text-base font-bold flex items-center gap-2">
+                  <div className="p-1.5 bg-indigo-500/10 text-indigo-500 rounded-xl">
+                    <Sliders className="w-4 h-4" />
+                  </div>
+                  Konfigurasi Primary Key & Parameter Komparasi
+                </h2>
               </div>
-            )}
 
-            <div className="flex flex-col lg:flex-row items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-sm">
-              {operationMode === 'COMPARE' ? (
-                <div className="flex items-center gap-1.5 overflow-x-auto w-full lg:w-auto">
-                  {[
-                    { key: 'ALL', label: 'Semua Status' },
-                    { key: 'MATCHED', label: 'Identik' },
-                    { key: 'MODIFIED', label: 'Beda' },
-                    { key: 'ADDED', label: 'Baru' },
-                    { key: 'DELETED', label: 'Dihapus' },
-                  ].map(tab => (
-                    <button
-                      key={tab.key}
-                      onClick={() => setFilter(tab.key)}
-                      className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${filter === tab.key ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'}`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-xs font-bold text-slate-700 px-2">Hasil Perhitungan Kalkulasi Data</div>
-              )}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="space-y-3 md:col-span-1 flex flex-col">
+                  <label className={`text-xs font-bold flex items-center gap-1.5 ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                    <Key className="w-4 h-4 text-amber-500" />
+                    Pilih Primary Key Utama:
+                  </label>
 
-              <div className="flex flex-col sm:flex-row items-center gap-2 w-full lg:w-auto">
-                <div className="relative w-full sm:w-64">
-                  <Filter className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-                  <input 
-                    type="text" 
-                    placeholder="Cari nama / ID tertentu..." 
-                    value={nameSearchFilter}
-                    onChange={(e) => setNameSearchFilter(e.target.value)}
-                    className="w-full bg-slate-50 text-xs text-slate-800 rounded-xl border border-slate-300 pl-8 pr-3 py-1.5"
-                  />
-                  {nameSearchFilter && (
-                    <button onClick={() => setNameSearchFilter('')} className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 text-xs font-bold">×</button>
-                  )}
-                </div>
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-3" />
+                    <input 
+                      type="text" 
+                      placeholder="Cari kolom kunci..." 
+                      value={pkSearchQuery}
+                      onChange={(e) => setPkSearchQuery(e.target.value)}
+                      disabled={!file1 && !file2}
+                      className={`w-full text-xs rounded-xl border pl-9 pr-3 py-2 disabled:opacity-50 ${darkMode ? 'bg-slate-950 border-slate-700 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
+                    />
+                  </div>
 
-                <button 
-                  onClick={exportToExcel} 
-                  disabled={!comparisonResult || filteredResults.length === 0} 
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium text-xs rounded-xl shadow-sm transition-all border border-emerald-500/30 whitespace-nowrap w-full sm:w-auto justify-center"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Ekspor ({selectedRowIds.length > 0 ? `${selectedRowIds.length} Dipilih` : `Semua Data`})</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="overflow-x-auto max-h-[500px]">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 text-slate-700 uppercase font-semibold sticky top-0 z-10 border-b border-slate-200">
-                    <tr>
-                      <th className="p-3 w-10 text-center">
-                        <input 
-                          type="checkbox" 
-                          onChange={toggleSelectAll}
-                          checked={filteredResults.length > 0 && filteredResults.every(r => selectedRowIds.includes(r.id))}
-                          className="w-4 h-4 text-indigo-600 rounded border-slate-300 cursor-pointer"
-                        />
-                      </th>
-                      {operationMode === 'COMPARE' && <th className="p-3 w-12 text-center">Aksi</th>}
-                      {operationMode === 'COMPARE' && <th className="p-3 w-28">Status</th>}
-                      <th className="p-3 w-48">Composite Key (Acuan)</th>
-                      {comparisonResult.headers.slice(0, 3).map(h => (
-                        <th key={h} className="p-3 min-w-[140px]">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredResults.length === 0 ? (
-                      <tr>
-                        <td colSpan={comparisonResult.headers.length + 4} className="p-8 text-center text-slate-400">
-                          Tidak ada data yang cocok.
-                        </td>
-                      </tr>
+                  <div className={`border rounded-2xl p-3 h-40 overflow-y-auto space-y-1.5 ${darkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50/80 border-slate-200'}`}>
+                    {(!file1 && !file2) ? (
+                      <p className="text-[11px] text-slate-400 italic p-2 text-center">Unggah file terlebih dahulu.</p>
+                    ) : filteredPkHeaders.length === 0 ? (
+                      <p className="text-[11px] text-slate-400 italic p-2 text-center">Kolom tidak ditemukan.</p>
                     ) : (
-                      filteredResults.map(row => {
-                        const isChecked = selectedRowIds.includes(row.id);
+                      filteredPkHeaders.map(col => {
+                        const isSelected = config.primaryKeys.includes(col);
                         return (
-                          <tr key={row.id} className={`transition-colors ${isChecked ? 'bg-indigo-50/50' : 'hover:bg-slate-50'}`}>
-                            <td className="p-3 text-center">
-                              <input 
-                                type="checkbox" 
-                                checked={isChecked}
-                                onChange={() => toggleRowSelection(row.id)}
-                                className="w-4 h-4 text-indigo-600 rounded border-slate-300 cursor-pointer"
-                              />
-                            </td>
-                            {operationMode === 'COMPARE' && (
-                              <td className="p-3 text-center">
-                                <button
-                                  onClick={() => setSelectedRowDetail(row)}
-                                  className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors shadow-2xs"
-                                  title="Lihat Detail"
-                                >
-                                  <Eye className="w-4 h-4" />
-                                </button>
-                              </td>
-                            )}
-                            {operationMode === 'COMPARE' && (
-                              <td className="p-3">
-                                {row.status === 'MATCHED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800"><CheckCircle2 className="w-3.5 h-3.5" /> Sesuai</span>}
-                                {row.status === 'MODIFIED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-800"><AlertCircle className="w-3.5 h-3.5" /> Beda</span>}
-                                {row.status === 'ADDED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-100 text-blue-800"><FilePlus className="w-3.5 h-3.5" /> Baru</span>}
-                                {row.status === 'DELETED' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-100 text-rose-800"><FileMinus className="w-3.5 h-3.5" /> Hapus</span>}
-                              </td>
-                            )}
-                            <td className="p-3 font-mono font-bold text-indigo-900 bg-slate-50">{row.key}</td>
-                            {comparisonResult.headers.slice(0, 3).map(h => {
-                              const val = operationMode === 'CALCULATE' 
-                                ? (row.row2 ? row.row2[h] : "") 
-                                : (row.status === 'MATCHED' ? (row.row1 ? row.row1[h] : "") : (row.row2 ? row.row2[h] : ""));
-                              const isTargetCol = h === comparisonResult.targetColName;
-                              return (
-                                <td key={h} className={`p-3 font-mono ${isTargetCol ? 'bg-emerald-50 text-emerald-900 font-bold border-l-2 border-emerald-400' : 'text-slate-600'}`}>
-                                  {formatCellValue(h, val)}
-                                </td>
-                              );
-                            })}
-                          </tr>
+                          <div 
+                            key={col} 
+                            onClick={() => togglePrimaryKey(col)}
+                            className={`flex items-center justify-between p-2.5 rounded-xl cursor-pointer text-xs transition-all ${
+                              isSelected 
+                                ? (darkMode ? 'bg-indigo-950/80 border border-indigo-700 text-indigo-300 font-bold shadow-xs' : 'bg-indigo-50 border border-indigo-200 text-indigo-900 font-bold shadow-2xs') 
+                                : (darkMode ? 'hover:bg-slate-800/80 text-slate-300' : 'hover:bg-slate-100/80 text-slate-700')
+                            }`}
+                          >
+                            <span className="truncate">{col}</span>
+                            {isSelected ? <CheckSquare className="w-4 h-4 text-indigo-500 flex-shrink-0 ml-2" /> : <Square className="w-4 h-4 text-slate-500 flex-shrink-0 ml-2" />}
+                          </div>
                         );
                       })
                     )}
-                  </tbody>
-                </table>
+                  </div>
+                </div>
+
+                <div className="space-y-4 md:col-span-1">
+                  <div className="space-y-3">
+                    <label className={`text-xs font-bold flex items-center gap-1.5 ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                      <Type className="w-4 h-4 text-indigo-400" />
+                      Aturan Pemrosesan Teks & Toleransi:
+                    </label>
+                    <div className="space-y-2.5 pt-1">
+                      <label className={`flex items-center gap-2.5 text-xs cursor-pointer p-2.5 rounded-xl border transition-colors ${darkMode ? 'border-slate-800 hover:bg-slate-950 text-slate-300' : 'border-slate-200/80 hover:bg-slate-50 text-slate-700'}`}>
+                        <input type="checkbox" checked={config.ignoreCase} onChange={(e) => setConfig({ ...config, ignoreCase: e.target.checked })} className="w-4 h-4 text-indigo-600 rounded border-slate-600 accent-indigo-600" />
+                        <span className="font-medium">Abaikan Kapitalisasi Huruf</span>
+                      </label>
+                      <label className={`flex items-center gap-2.5 text-xs cursor-pointer p-2.5 rounded-xl border transition-colors ${darkMode ? 'border-slate-800 hover:bg-slate-950 text-slate-300' : 'border-slate-200/80 hover:bg-slate-50 text-slate-700'}`}>
+                        <input type="checkbox" checked={config.trimWhitespace} onChange={(e) => setConfig({ ...config, trimWhitespace: e.target.checked })} className="w-4 h-4 text-indigo-600 rounded border-slate-600 accent-indigo-600" />
+                        <span className="font-medium">Abaikan Spasi Berlebih</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`space-y-2 md:col-span-1 border p-5 rounded-2xl flex flex-col justify-between shadow-2xs ${darkMode ? 'bg-indigo-950/20 border-indigo-900/50' : 'bg-indigo-50/40 border-indigo-100'}`}>
+                  <div>
+                    <span className={`text-xs font-bold block mb-1.5 flex items-center gap-1.5 ${darkMode ? 'text-indigo-300' : 'text-indigo-900'}`}>
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-500" /> Informasi Sistem:
+                    </span>
+                    <p className={`text-[11px] leading-relaxed ${darkMode ? 'text-indigo-200/80' : 'text-indigo-800/90'}`}>
+                      {operationMode === 'COMPARE' 
+                        ? 'Sistem otomatis mendeteksi baris yang identik, termodifikasi, data baru, atau data yang dihapus berdasarkan Primary Key.' 
+                        : 'Sistem siap memproses rumus matematika kustom Anda dengan akurasi tinggi pada baris data terpilih.'}
+                    </p>
+                  </div>
+                </div>
               </div>
-            </div>
-          </section>
+
+              {operationMode === 'CALCULATE' && (
+                <div className={`pt-4 border-t space-y-4 p-5 rounded-2xl border animate-fade-in ${darkMode ? 'border-slate-800 bg-emerald-950/20 border-emerald-900/40' : 'border-slate-100 bg-emerald-50/30 border-emerald-200/80'}`}>
+                  <div className="flex items-center justify-between">
+                    <label className={`text-xs font-bold flex items-center gap-2 ${darkMode ? 'text-emerald-300' : 'text-emerald-950'}`}>
+                      <Target className="w-4 h-4 text-emerald-500" />
+                      Pengaturan Rumus Kalkulasi Baris:
+                    </label>
+                    <label className={`flex items-center gap-2 text-xs font-bold cursor-pointer px-3 py-1.5 rounded-xl border transition-colors ${darkMode ? 'bg-emerald-950/50 border-emerald-800 text-emerald-200' : 'bg-white border-emerald-300 text-emerald-900 shadow-2xs'}`}>
+                      <input type="checkbox" checked={enableFormula} onChange={(e) => setEnableFormula(e.target.checked)} className="w-4 h-4 text-emerald-600 rounded border-emerald-400 accent-emerald-600" />
+                      <span>Aktifkan Kalkulasi</span>
+                    </label>
+                  </div>
+
+                  {enableFormula && (
+                    <div className="space-y-4 pt-1">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className={`text-xs font-semibold block mb-1 ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>Pilih Kolom Hasil / Target:</label>
+                          <select 
+                            value={formulaTargetColumn} 
+                            onChange={(e) => setFormulaTargetColumn(e.target.value)} 
+                            className={`w-full text-xs border rounded-xl px-3 py-2.5 font-medium ${darkMode ? 'bg-slate-950 border-emerald-800 text-slate-100' : 'bg-white border-emerald-300'}`}
+                          >
+                            <option value="">-- Buat Kolom Baru Otomatis (Hasil_Formula) --</option>
+                            {commonHeaders.map(col => (
+                              <option key={col} value={col}>Timpa / Isi Kolom: {col}</option>
+                            ))}
+                            <option value="CUSTOM">+ Buat Nama Kolom Baru Lainnya...</option>
+                          </select>
+                        </div>
+
+                        {formulaTargetColumn === 'CUSTOM' && (
+                          <div>
+                            <label className={`text-xs font-semibold block mb-1 ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>Nama Kolom Baru:</label>
+                            <input 
+                              type="text" 
+                              placeholder="Contoh: Total_Take_Home_Pay" 
+                              value={customTargetName} 
+                              onChange={(e) => setCustomTargetName(e.target.value)} 
+                              className={`w-full text-xs border rounded-xl px-3 py-2.5 font-medium ${darkMode ? 'bg-slate-950 border-emerald-800 text-slate-100' : 'bg-white border-emerald-300'}`}
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className={`text-xs font-semibold block mb-1 ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>Formula Hitung (Gunakan tanda Kurung Siku `[...]`):</label>
+                        <input type="text" placeholder="Contoh: [Gaji_Pokok] + [Tunjangan] - [Potongan]" value={formulaExpr} onChange={(e) => setFormulaExpr(e.target.value)} className={`w-full text-xs font-mono rounded-xl border px-4 py-3 shadow-sm ${darkMode ? 'bg-slate-950 border-emerald-800 text-slate-100' : 'bg-white border-emerald-300 text-slate-800'}`} />
+                      </div>
+
+                      <div>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+                          <span className={`text-[11px] font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Klik untuk menyisipkan kolom ke rumus:</span>
+                          
+                          <div className="relative w-full sm:w-64">
+                            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                            <input 
+                              type="text" 
+                              placeholder="Cari nama kolom..." 
+                              value={formulaColumnSearch}
+                              onChange={(e) => setFormulaColumnSearch(e.target.value)}
+                              className={`w-full text-[11px] rounded-xl border pl-8 pr-3 py-1.5 ${darkMode ? 'bg-slate-950 border-emerald-800 text-slate-100' : 'bg-white border-emerald-300 text-slate-800'}`}
+                            />
+                            {formulaColumnSearch && (
+                              <button onClick={() => setFormulaColumnSearch('')} className="absolute right-2.5 top-1.5 text-slate-400 hover:text-slate-600 text-xs font-bold">×</button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className={`flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-3 border rounded-2xl ${darkMode ? 'bg-slate-950/60 border-emerald-900/50' : 'bg-white/80 border-emerald-200'}`}>
+                          {filteredFormulaHeaders.length === 0 ? (
+                            <p className="text-[11px] text-slate-400 italic p-1">Kolom tidak ditemukan.</p>
+                          ) : (
+                            filteredFormulaHeaders.map(col => (
+                              <button key={col} onClick={() => insertColumnTagToFormula(col)} className={`px-3 py-1.5 border text-xs rounded-xl font-mono transition-all shadow-2xs ${darkMode ? 'bg-slate-900 border-slate-700 hover:bg-emerald-950 hover:border-emerald-700 text-slate-200' : 'bg-white border-slate-200 hover:border-emerald-600 hover:bg-emerald-50 text-slate-700'}`}>
+                                +{col}
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+
+            {comparisonResult && (
+              <section className="space-y-4 animate-fade-in">
+                {operationMode === 'COMPARE' ? (
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
+                    <div className={`p-4 rounded-3xl border shadow-sm flex flex-col justify-between transition-transform hover:scale-[1.01] ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                      <div className="flex items-center justify-between text-slate-400">
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Total Record</span>
+                        <Database className="w-4 h-4 text-slate-400" />
+                      </div>
+                      <div className="mt-3"><div className={`text-2xl font-black ${darkMode ? 'text-slate-100' : 'text-slate-900'}`}>{comparisonResult.counts.total}</div></div>
+                    </div>
+
+                    <div className={`p-4 rounded-3xl border shadow-sm flex flex-col justify-between transition-transform hover:scale-[1.01] ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                      <div className="flex items-center justify-between text-emerald-500">
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Identik</span>
+                        <CheckCircle className="w-4 h-4" />
+                      </div>
+                      <div className="mt-3"><div className="text-2xl font-black text-emerald-500">{comparisonResult.counts.matched}</div></div>
+                    </div>
+
+                    <div className={`p-4 rounded-3xl border shadow-sm flex flex-col justify-between transition-transform hover:scale-[1.01] ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                      <div className="flex items-center justify-between text-amber-500">
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Perbedaan</span>
+                        <AlertTriangle className="w-4 h-4" />
+                      </div>
+                      <div className="mt-3"><div className="text-2xl font-black text-amber-500">{comparisonResult.counts.modified}</div></div>
+                    </div>
+
+                    <div className={`p-4 rounded-3xl border shadow-sm flex flex-col justify-between transition-transform hover:scale-[1.01] ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                      <div className="flex items-center justify-between text-blue-500">
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Baru</span>
+                        <PlusCircle className="w-4 h-4" />
+                      </div>
+                      <div className="mt-3"><div className="text-2xl font-black text-blue-500">{comparisonResult.counts.added}</div></div>
+                    </div>
+
+                    <div className={`p-4 rounded-3xl border shadow-sm col-span-2 md:col-span-1 flex flex-col justify-between transition-transform hover:scale-[1.01] ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                      <div className="flex items-center justify-between text-rose-500">
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Dihapus</span>
+                        <MinusCircle className="w-4 h-4" />
+                      </div>
+                      <div className="mt-3"><div className="text-2xl font-black text-rose-500">{comparisonResult.counts.deleted}</div></div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className={`p-5 rounded-3xl border flex items-center justify-between shadow-sm ${darkMode ? 'bg-emerald-950/30 border-emerald-900/60 text-emerald-200' : 'bg-emerald-50 border-emerald-200 text-emerald-950'}`}>
+                    <div>
+                      <span className="text-xs font-bold uppercase tracking-widest block mb-0.5">Kalkulasi Formula Berhasil</span>
+                      <p className="text-xs">Berhasil memproses total **{comparisonResult.counts.total} baris data** secara akurat.</p>
+                    </div>
+                    <div className="text-2xl font-black font-mono">{comparisonResult.counts.total} Baris</div>
+                  </div>
+                )}
+
+                <div className={`p-4 rounded-3xl border shadow-sm flex flex-col lg:flex-row items-center justify-between gap-4 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                  {operationMode === 'COMPARE' ? (
+                    <div className="flex items-center gap-1.5 overflow-x-auto w-full lg:w-auto p-1">
+                      {[
+                        { key: 'ALL', label: 'Semua Status' },
+                        { key: 'MATCHED', label: 'Identik' },
+                        { key: 'MODIFIED', label: 'Beda' },
+                        { key: 'ADDED', label: 'Baru' },
+                        { key: 'DELETED', label: 'Dihapus' },
+                      ].map(tab => (
+                        <button
+                          key={tab.key}
+                          onClick={() => setFilter(tab.key)}
+                          className={`px-4 py-2 rounded-2xl text-xs font-bold transition-all whitespace-nowrap ${
+                            filter === tab.key 
+                              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20' 
+                              : (darkMode ? 'text-slate-400 hover:bg-slate-800 hover:text-white' : 'text-slate-600 hover:bg-slate-100')
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className={`text-xs font-bold px-2 ${darkMode ? 'text-slate-200' : 'text-slate-700'}`}>Pratinjau Tabel Hasil Perhitungan</div>
+                  )}
+
+                  <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full lg:w-auto">
+                    <div className="relative w-full sm:w-72">
+                      <Filter className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-3" />
+                      <input 
+                        type="text" 
+                        placeholder="Cari ID / Nama spesifik..." 
+                        value={nameSearchFilter}
+                        onChange={(e) => setNameSearchFilter(e.target.value)}
+                        className={`w-full text-xs rounded-2xl border pl-9 pr-3.5 py-2.5 font-medium ${darkMode ? 'bg-slate-950 border-slate-700 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
+                      />
+                      {nameSearchFilter && (
+                        <button onClick={() => setNameSearchFilter('')} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 text-xs font-bold">×</button>
+                      )}
+                    </div>
+
+                    <button 
+                      onClick={exportToExcel} 
+                      disabled={!comparisonResult || filteredResults.length === 0} 
+                      className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-2xl shadow-md shadow-emerald-600/20 transition-all whitespace-nowrap w-full sm:w-auto justify-center"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Ekspor Excel ({selectedRowIds.length > 0 ? `${selectedRowIds.length} Dipilih` : `Semua`})</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className={`rounded-3xl border shadow-sm overflow-hidden ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                  <div className="overflow-x-auto max-h-[520px]">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className={`uppercase font-bold tracking-wider sticky top-0 z-20 border-b ${darkMode ? 'bg-slate-950/90 text-slate-300 border-slate-800 backdrop-blur-md' : 'bg-slate-100/90 text-slate-700 border-slate-200 backdrop-blur-md'}`}>
+                        <tr>
+                          <th className="p-3.5 w-12 text-center">
+                            <input 
+                              type="checkbox" 
+                              onChange={toggleSelectAll}
+                              checked={filteredResults.length > 0 && filteredResults.every(r => selectedRowIds.includes(r.id))}
+                              className="w-4 h-4 text-indigo-600 rounded border-slate-600 cursor-pointer accent-indigo-600"
+                            />
+                          </th>
+                          {operationMode === 'COMPARE' && <th className="p-3.5 w-14 text-center">Audit</th>}
+                          {operationMode === 'COMPARE' && <th className="p-3.5 w-32">Status</th>}
+                          <th className="p-3.5 w-52">Composite Primary Key</th>
+                          {comparisonResult.headers.slice(0, 3).map(h => (
+                            <th key={h} className="p-3.5 min-w-[160px]">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className={`divide-y ${darkMode ? 'divide-slate-800/80' : 'divide-slate-100'}`}>
+                        {filteredResults.length === 0 ? (
+                          <tr>
+                            <td colSpan={comparisonResult.headers.length + 4} className="p-12 text-center text-slate-400 italic">
+                              Tidak ada data yang sesuai dengan kriteria filter.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredResults.map(row => {
+                            const isChecked = selectedRowIds.includes(row.id);
+                            return (
+                              <tr key={row.id} className={`transition-colors ${isChecked ? (darkMode ? 'bg-indigo-950/60' : 'bg-indigo-50/60') : (darkMode ? 'hover:bg-slate-800/40' : 'hover:bg-slate-50/80')}`}>
+                                <td className="p-3.5 text-center">
+                                  <input 
+                                    type="checkbox" 
+                                    checked={isChecked}
+                                    onChange={() => toggleRowSelection(row.id)}
+                                    className="w-4 h-4 text-indigo-600 rounded border-slate-600 cursor-pointer accent-indigo-600"
+                                  />
+                                </td>
+                                {operationMode === 'COMPARE' && (
+                                  <td className="p-3.5 text-center">
+                                    <button
+                                      onClick={() => setSelectedRowDetail(row)}
+                                      className={`p-2 rounded-xl transition-all shadow-2xs ${darkMode ? 'text-indigo-400 hover:bg-indigo-950 hover:text-indigo-300' : 'text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700'}`}
+                                      title="Lihat Detail Audit"
+                                    >
+                                      <Eye className="w-4 h-4" />
+                                    </button>
+                                  </td>
+                                )}
+                                {operationMode === 'COMPARE' && (
+                                  <td className="p-3.5">
+                                    {row.status === 'MATCHED' && <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 font-bold text-[11px]"><CheckCircle2 className="w-3.5 h-3.5" /> Sesuai</span>}
+                                    {row.status === 'MODIFIED' && <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 font-bold text-[11px]"><AlertCircle className="w-3.5 h-3.5" /> Beda</span>}
+                                    {row.status === 'ADDED' && <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 font-bold text-[11px]"><FilePlus className="w-3.5 h-3.5" /> Baru</span>}
+                                    {row.status === 'DELETED' && <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-500/10 text-rose-400 font-bold text-[11px]"><FileMinus className="w-3.5 h-3.5" /> Hapus</span>}
+                                  </td>
+                                )}
+                                <td className={`p-3.5 font-mono font-bold tracking-tight ${darkMode ? 'text-indigo-400 bg-slate-950/40' : 'text-indigo-900 bg-slate-50/80'}`}>{row.key}</td>
+                                {comparisonResult.headers.slice(0, 3).map(h => {
+                                  const val = operationMode === 'CALCULATE' 
+                                    ? (row.row2 ? row.row2[h] : "") 
+                                    : (row.status === 'MATCHED' ? (row.row1 ? row.row1[h] : "") : (row.row2 ? row.row2[h] : ""));
+                                  const isTargetCol = h === comparisonResult.targetColName;
+                                  return (
+                                    <td key={h} className={`p-3.5 font-mono ${isTargetCol ? (darkMode ? 'bg-emerald-950/40 text-emerald-300 font-bold border-l-2 border-emerald-500' : 'bg-emerald-50 text-emerald-900 font-bold border-l-2 border-emerald-400') : (darkMode ? 'text-slate-300' : 'text-slate-600')}`}>
+                                      {formatCellValue(h, val)}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+            )}
+          </>
+        )}
+
+        {appMode === 'WORD' && (
+          <WordModule 
+            darkMode={darkMode}
+            resetAllData={resetAllData}
+            handleUploadWord1={handleUploadWord1}
+            handleUploadWord2={handleUploadWord2}
+            wordFile1={wordFile1}
+            wordFile2={wordFile2}
+            wordText1={wordText1}
+            wordText2={wordText2}
+            wordDiffResult={wordDiffResult}
+          />
         )}
       </main>
 
-      {selectedRowDetail && comparisonResult && operationMode === 'COMPARE' && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-fade-in border border-slate-100">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-900 text-white">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-indigo-600 rounded-xl text-white">
-                  <Database className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-base">Detail Audit Baris / Record</h3>
-                  <p className="text-xs text-slate-300">Composite Primary Key: <span className="font-mono text-amber-400 font-bold">{selectedRowDetail.key}</span></p>
-                </div>
-              </div>
-              <button onClick={() => setSelectedRowDetail(null)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 hover:text-white transition-colors">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <div className="p-6 overflow-y-auto space-y-4 flex-1 bg-slate-50/50">
-              <div className="bg-amber-50/80 border border-amber-200/80 p-3.5 rounded-2xl text-xs text-amber-900 flex items-center justify-between shadow-xs">
-                <span className="font-medium">Perbandingan atribut data secara presisi berdasarkan kombinasi Composite Primary Key.</span>
-                <span className="font-bold bg-amber-200/70 px-2.5 py-1 rounded-lg text-amber-950">{selectedRowDetail.diffCount} Kolom Berbeda</span>
-              </div>
+      <DetailModal 
+        selectedRowDetail={selectedRowDetail}
+        comparisonResult={comparisonResult}
+        darkMode={darkMode}
+        setSelectedRowDetail={setSelectedRowDetail}
+      />
 
-              <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead className="bg-slate-100/80 text-slate-700 font-semibold border-b border-slate-200">
-                    <tr>
-                      <th className="p-3.5 text-left w-1/3">Nama Kolom / Atribut</th>
-                      <th className="p-3.5 text-left w-1/3 text-slate-600">File 1 (Data Lama / Acuan)</th>
-                      <th className="p-3.5 text-left w-1/3 text-slate-800">File 2 (Data Baru / Pembanding)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {comparisonResult.headers.map(h => {
-                      const diff = selectedRowDetail.diffs[h];
-                      const isEqual = diff ? diff.isEqual : true;
-                      return (
-                        <tr key={h} className={!isEqual ? 'bg-amber-50/60 font-semibold' : 'hover:bg-slate-50/50 transition-colors'}>
-                          <td className="p-3.5 font-medium text-slate-800 border-r border-slate-100 flex items-center gap-2">
-                            <span className={`w-2 h-2 rounded-full ${!isEqual ? 'bg-amber-500' : 'bg-slate-300'}`}></span>
-                            {h}
-                          </td>
-                          <td className={`p-3.5 border-r border-slate-100 font-mono ${!isEqual ? 'text-rose-700 bg-rose-50/40' : 'text-slate-600'}`}>
-                            {formatCellValue(h, selectedRowDetail.row1 ? selectedRowDetail.row1[h] : "")}
-                          </td>
-                          <td className={`p-3.5 font-mono ${!isEqual ? 'text-emerald-700 bg-emerald-50/40 font-bold' : 'text-slate-600'}`}>
-                            {formatCellValue(h, selectedRowDetail.row2 ? selectedRowDetail.row2[h] : "")}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="p-4 border-t border-slate-100 bg-white flex justify-end">
-              <button onClick={() => setSelectedRowDetail(null)} className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl transition-colors shadow-sm">
-                Tutup Jendela Detail
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Footer Bawah Profesional Skripsi */}
-      <footer className="bg-slate-900 text-slate-400 border-t border-slate-800 mt-auto py-6">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-1">
-          <p className="font-medium text-slate-300 text-xs">
+      <footer className={`border-t mt-auto py-6 text-center transition-colors ${darkMode ? 'bg-slate-900 border-slate-800 text-slate-400' : 'bg-slate-900 border-slate-800 text-slate-400'}`}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-1">
+          <p className="font-semibold text-slate-300 text-xs">
             &copy; {new Date().getFullYear()} <span className="text-indigo-400 font-bold">Taufiq Ismail</span>. All rights reserved.
           </p>
           <p className="text-[10px] text-slate-400">
-            Dibangun dengan React.js, Vite, Tailwind CSS, SheetJS (xlsx), & PDF.js.
+            Dibangun dengan React.js, Vite, Tailwind CSS, SheetJS (xlsx), & Mammoth.
           </p>
         </div>
       </footer>
