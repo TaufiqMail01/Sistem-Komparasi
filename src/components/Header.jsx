@@ -20,6 +20,9 @@ export default function Header({ appMode, setAppMode, darkMode, setDarkMode }) {
                   <h1 className="text-base font-bold tracking-tight">ReconDoc</h1>
                   <span className="text-indigo-400 font-medium text-xs">| Sistem Rekonsiliasi & Audit Dokumen</span>
                 </div>
+                <p className={`text-[11px] ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  Universitas Bina Sarana Informatika &bull; Divisi Admin Kontrak PT Permata Indo Sejahtera
+                </p>
               </div>
             </div>
 
@@ -97,29 +100,20 @@ export default function Header({ appMode, setAppMode, darkMode, setDarkMode }) {
             <div className="space-y-3.5 text-xs leading-relaxed text-slate-300">
               <div className="p-3.5 rounded-2xl bg-slate-950/50 border border-slate-800 space-y-1">
                 <div className="flex items-center gap-2 font-bold text-blue-400">
-                  <CheckCircle2 className="w-4 h-4" /> 1. Mode Excel & CSV (Komparasi & Kalkulasi)
+                  <CheckCircle2 className="w-4 h-4" /> 1. Mode Excel & CSV (Data Reconciliation)
                 </div>
                 <ul className="list-disc list-inside space-y-1 pl-1 text-slate-400">
-                  <li><strong>Komparasi File:</strong> Unggah File Referensi (Lama) dan File Pembanding (Baru), sistem otomatis mendeteksi baris Identik, Perbedaan, Data Baru, dan Data Dihapus.</li>
-                  <li><strong>Kalkulasi Rumus:</strong> Pilih mode kalkulasi untuk memproses baris data secara otomatis menggunakan rumus matematika kustom berbasis kurung siku (contoh: <code className="text-emerald-400">[Gaji] + [Tunjangan]</code>).</li>
+                  <li><strong>Unggah Dokumen:</strong> Masukkan File Lama (Referensi) dan File Baru (Pembanding).</li>
+                  <li><strong>Pencocokan Baris:</strong> Sistem mendeteksi baris Identik, Perubahan Data, Data Baru, dan Data Dihapus berdasarkan *Primary Key*.</li>
                 </ul>
               </div>
 
               <div className="p-3.5 rounded-2xl bg-slate-950/50 border border-slate-800 space-y-1">
                 <div className="flex items-center gap-2 font-bold text-indigo-400">
-                  <CheckCircle2 className="w-4 h-4" /> 2. Mode Review Word (.docx)
+                  <CheckCircle2 className="w-4 h-4" /> 2. Mode Review Word (.docx) & Unduh Laporan
                 </div>
                 <p className="text-slate-400">
-                  Unggah dua dokumen Word (.docx) untuk melihat perbandingan teks secara langsung (diff words) dengan penyorotan warna yang jelas untuk teks yang ditambah atau dihapus.
-                </p>
-              </div>
-
-              <div className="p-3.5 rounded-2xl bg-slate-950/50 border border-slate-800 space-y-1">
-                <div className="flex items-center gap-2 font-bold text-emerald-400">
-                  <CheckCircle2 className="w-4 h-4" /> 3. Ekspor Laporan Instan
-                </div>
-                <p className="text-slate-400">
-                  Gunakan tombol filter atau pilih baris tertentu, lalu klik <strong>Ekspor Excel</strong> untuk mengunduh hasil audit dan rekonsiliasi secara instan.
+                  Unggah dua dokumen Word untuk membandingkan perbedaan teks secara langsung. Hasil perbandingan dapat diunduh dalam bentuk laporan teks (.txt).
                 </p>
               </div>
             </div>

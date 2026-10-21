@@ -1,126 +1,109 @@
 import * as XLSX from 'xlsx';
 import mammoth from 'mammoth';
 
-// Helper untuk memparsing angka dengan format desimal Indonesia
-export const parseIndonesianNumber = (val) => {
-  if (val === null || val === undefined || val === "") return NaN;
-  if (typeof val === 'number') return val;
-  let s = String(val).trim();
-  s = s.replace(/Rp\.?/gi, '').trim(); 
-  if (s.includes(',') && s.includes('.')) {
-    s = s.replace(/\./g, '').replace(',', '.');
-  } else if (s.includes(',')) {
-    s = s.replace(',', '.');
-  }
-  const num = Number(s);
-  return isNaN(num) ? NaN : num;
-};
-
-// Parser khusus Excel / CSV
+// Fungsi untuk membaca dan memparsing file Excel / CSV
 export const readFileData = (file) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
+    const isCsv = file.name.toLowerCase().endsWith('.csv');
+
     reader.onload = (e) => {
       try {
-        const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+        const data = e.target.result;
+        let workbook;
+
+        if (isCsv) {
+          workbook = XLSX.read(data, { type: 'string', cellText: true, cellDates: true });
+        } else {
+          workbook = XLSX.read(data, { type: 'binary', cellText: true, cellDates: true });
+        }
+
         const sheetNames = workbook.SheetNames;
-        
         const sheetsData = {};
-        sheetNames.forEach(name => {
-          const worksheet = workbook.Sheets[name];
-          const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
-          
-          let headerRowIndex = 0;
-          const keywords = ['NO', 'ID', 'KODE', 'NRK', 'NIP', 'NAMA', 'KARYAWAN', 'NIK', 'EMPLOYEE', 'NAMA LENGKAP'];
 
-          for (let i = 0; i < rawRows.length; i++) {
-            const rowValues = rawRows[i].map(cell => String(cell).trim().toUpperCase());
-            const matchCount = keywords.filter(keyword => rowValues.includes(keyword)).length;
-            if (matchCount > 0) {
-              headerRowIndex = i;
-              break;
-            }
-          }
-
-          const rawJson = XLSX.utils.sheet_to_json(worksheet, { range: headerRowIndex, defval: "" });
-          const json = Array.isArray(rawJson) ? rawJson.filter(row => {
-            return row && Object.values(row).some(val => val !== "" && val !== null && val !== undefined);
-          }) : [];
-
-          sheetsData[name] = json;
+        sheetNames.forEach(sheetName => {
+          const worksheet = workbook.Sheets[sheetName];
+          // Mengubah sheet ke JSON dengan baris kosong diisi string kosong
+          const json = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+          sheetsData[sheetName] = json;
         });
 
-        resolve({ workbook, sheetNames, sheetsData });
-      } catch (err) {
-        reject(err);
+        resolve({ sheetNames, sheetsData });
+      } catch (error) {
+        reject(error);
       }
     };
+
     reader.onerror = (error) => reject(error);
-    reader.readAsArrayBuffer(file);
+
+    if (isCsv) {
+      reader.readAsText(file);
+    } else {
+      reader.readAsBinaryString(file);
+    }
   });
 };
 
-// Parser Dokumen Word (.docx)
+// Fungsi untuk membaca teks dari dokumen Word (.docx)
 export const readWordData = async (file) => {
-  const arrayBuffer = await file.arrayBuffer();
-  const result = await mammoth.extractRawText({ arrayBuffer });
-  return result.value;
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const result = await mammoth.extractRawText({ arrayBuffer });
+    return result.value;
+  } catch (error) {
+    console.error("Gagal membaca dokumen Word:", error);
+    throw error;
+  }
 };
 
-// Format Tampilan Sel Tabel
-export const formatCellValue = (headerName, val) => {
-  if (val === null || val === undefined || val === "") return "-";
+// Fungsi untuk memformat nilai sel tabel agar aman dari salah deteksi angka panjang
+export const formatCellValue = (headerName, value) => {
+  if (value === null || value === undefined) return "";
   
-  const lowerHeader = headerName.toLowerCase();
-  const excludeCurrencyKeywords = ['no', 'nomor', 'nik', 'nrk', 'kode', 'id', 'telp', 'phone', 'npwp', 'rekening'];
-  const isExcludedFromCurrency = excludeCurrencyKeywords.some(keyword => {
-    const regex = new RegExp(`(^|[^a-z])${keyword}([^a-z]|$)`, 'i');
-    return regex.test(lowerHeader);
-  });
+  const lowerHeader = String(headerName || "").toLowerCase();
+  
+  // Deteksi kolom nomor identitas atau nomor penting agar TIDAK diformat jadi Rupiah
+  const isIdOrNumberField = 
+    lowerHeader.includes('bpjs') || 
+    lowerHeader.includes('nik') || 
+    lowerHeader.includes('nrk') || 
+    lowerHeader.includes('nip') || 
+    lowerHeader.includes('id') || 
+    lowerHeader.includes('no') ||
+    lowerHeader.includes('kode') ||
+    lowerHeader.includes('telp') ||
+    lowerHeader.includes('phone');
 
-  if (isExcludedFromCurrency) {
-    return String(val);
+  if (isIdOrNumberField) {
+    return String(value).trim();
   }
 
-  const currencyKeywords = [
-    'gaji', 'tunjangan', 'potongan', 'bonus', 'insentif', 'lembur', 'thr', 
-    'bruto', 'thp', 'total', 'bayar', 'umk', 'penalty', 'kompensasi', 
-    'pajak', 'pph', 'nominal', 'jumlah', 'harga', 'biaya', 'rp', 'saltab', 'hasil_formula', 'iuran',
-    'overtime', 'jht', 'jkatan', 'jp', 'kesehatan', 'jkk', 'jkm', 'jshk', 'disnaker', 'fix allowance', 'ter max', 'ter min'
-  ];
-  const isCurrency = currencyKeywords.some(keyword => lowerHeader.includes(keyword));
-
-  const numVal = parseIndonesianNumber(val);
-  if (isCurrency && !isNaN(numVal) && typeof val !== 'boolean') {
-    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(numVal);
+  // Jika berupa angka finansial murni / numerik biasa
+  const num = Number(value);
+  if (!isNaN(num) && typeof value !== 'boolean' && String(value).trim() !== "") {
+    return num.toLocaleString('id-ID');
   }
 
-  const dateKeywords = ['tanggal', 'date', 'tgl', 'start', 'end', 'join', 'expired', 'lahir'];
-  const isDateHeader = dateKeywords.some(keyword => lowerHeader.includes(keyword));
+  return String(value);
+};
 
-  if (isDateHeader) {
-    if (val instanceof Date) {
-      const d = String(val.getDate()).padStart(2, '0');
-      const m = String(val.getMonth() + 1).padStart(2, '0');
-      const y = val.getFullYear();
-      return `${d}-${m}-${y}`;
-    }
-    if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val)) {
-      const parts = val.split('T')[0].split('-');
-      if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
-    }
-    if (typeof val === 'number' && val > 30000 && val < 60000) {
-      const utc_days = Math.floor(val - 25569);
-      const utc_value = utc_days * 86400;
-      const dateInfo = new Date(utc_value * 1000);
-      const d = String(dateInfo.getUTCDate()).padStart(2, '0');
-      const m = String(dateInfo.getUTCMonth() + 1).padStart(2, '0');
-      const y = dateInfo.getUTCFullYear();
-      return `${d}-${m}-${y}`;
-    }
+// Fungsi bantu parsing angka format Indonesia ke angka sistem
+export const parseIndonesianNumber = (val) => {
+  if (val === null || val === undefined) return NaN;
+  if (typeof val === 'number') return val;
+  
+  let s = String(val).trim();
+  // Hilangkan awalan mata uang jika ada
+  s = s.replace(/Rp\.?/gi, '').trim();
+
+  // Jika format menggunakan titik sebagai pemisah ribuan dan koma sebagai desimal (contoh: 1.500.000,50)
+  if (s.includes(',') && s.includes('.')) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (s.includes(',')) {
+    // Jika hanya ada koma (kemungkinan desimal atau pemisah ribuan lokal)
+    s = s.replace(',', '.');
   }
 
-  if (typeof val === 'object') return JSON.stringify(val);
-  return String(val);
+  const parsed = parseFloat(s);
+  return isNaN(parsed) ? NaN : parsed;
 };
