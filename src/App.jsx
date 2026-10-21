@@ -1,10 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
+import * as pdfjsLib from 'pdfjs-dist';
 import { 
   Upload, FileSpreadsheet, ArrowRightLeft, Download, 
   Settings, Key, Sliders, Layers, CheckCircle, AlertTriangle, 
-  PlusCircle, MinusCircle, Eye, CheckCircle2, AlertCircle, FilePlus, FileMinus, X, Calculator, Plus, RotateCcw, Database, Type, Binary, CheckSquare, Square, Search, Filter, Target
+  PlusCircle, MinusCircle, Eye, CheckCircle2, AlertCircle, FilePlus, FileMinus, X, Calculator, Plus, RotateCcw, Database, Type, Binary, CheckSquare, Square, Search, Filter, Target, FileText
 } from 'lucide-react';
+
+// Konfigurasi Worker PDF.js agar dapat berjalan lancar di browser
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
 export default function App() {
   const [file1, setFile1] = useState(null);
@@ -53,8 +57,85 @@ export default function App() {
     return isNaN(num) ? NaN : num;
   };
 
+  // Fungsi Parser khusus untuk mengekstrak data tabel dari file PDF laporan
+  const readPdfData = async (file) => {
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const pdfDoc = await loadingTask.promise;
+    
+    let allRows = [];
+    const keywords = ['NO', 'ID', 'KODE', 'NRK', 'NIP', 'NAMA', 'KARYAWAN', 'NIK', 'EMPLOYEE', 'NAMA LENGKAP'];
+
+    for (let i = 1; i <= pdfDoc.numPages; i++) {
+      const page = await pdfDoc.getPage(i);
+      const textContent = await page.getTextContent();
+      
+      // Mengelompokkan teks berdasarkan koordinat vertikal (Y) agar menjadi satu baris tabel yang utuh
+      let rowsMap = {};
+      textContent.items.forEach(item => {
+        // item.transform[5] adalah posisi koordinat vertikal (Y)
+        const yCoord = Math.round(item.transform[5] / 8) * 8; 
+        if (!rowsMap[yCoord]) rowsMap[yCoord] = [];
+        rowsMap[yCoord].push({ x: item.transform[4], text: item.str.trim() });
+      });
+
+      // Urutkan berdasarkan koordinat Y (dari atas ke bawah) lalu koordinat X (dari kiri ke kanan)
+      const sortedY = Object.keys(rowsMap).sort((a, b) => Number(b) - Number(a));
+      sortedY.forEach(y => {
+        const rowItems = rowsMap[y].sort((a, b) => a.x - b.x);
+        const rowValues = rowItems.map(r => r.text).filter(t => t !== "");
+        if (rowValues.length > 0) {
+          allRows.push(rowValues);
+        }
+      });
+    }
+
+    if (allRows.length === 0) {
+      throw new Error("Tidak ada teks yang dapat diekstrak dari file PDF.");
+    }
+
+    // Deteksi baris header otomatis di dalam dokumen PDF
+    let headerRowIndex = 0;
+    for (let i = 0; i < allRows.length; i++) {
+      const rowUpper = allRows[i].map(cell => cell.toUpperCase());
+      const matchCount = keywords.filter(kw => rowUpper.includes(kw)).length;
+      if (matchCount > 0) {
+        headerRowIndex = i;
+        break;
+      }
+    }
+
+    const headers = allRows[headerRowIndex] || ['Kolom_1', 'Kolom_2', 'Kolom_3'];
+    const dataRows = allRows.slice(headerRowIndex + 1);
+
+    // Ubah format baris array menjadi objek JSON berpasangan dengan Header
+    const json = dataRows.map(row => {
+      let obj = {};
+      headers.forEach((h, idx) => {
+        obj[h] = row[idx] !== undefined ? row[idx] : "";
+      });
+      return obj;
+    }).filter(row => Object.values(row).some(val => val !== ""));
+
+    const sheetName = "Data_PDF";
+    const sheetsData = { [sheetName]: json };
+
+    return { sheetNames: [sheetName], sheetsData };
+  };
+
   const readFileData = (file) => {
     return new Promise((resolve, reject) => {
+      const fileName = file.name.toLowerCase();
+      
+      // Jika file berformat PDF, arahkan ke parser khusus PDF
+      if (fileName.endsWith('.pdf')) {
+        readPdfData(file)
+          .then(res => resolve(res))
+          .catch(err => reject(err));
+        return;
+      }
+
+      // Jika file berformat Excel / CSV
       const reader = new FileReader();
       reader.onload = (e) => {
         try {
@@ -65,8 +146,6 @@ export default function App() {
           const sheetsData = {};
           sheetNames.forEach(name => {
             const worksheet = workbook.Sheets[name];
-            
-            // 1. Baca sheet secara mentah untuk mendeteksi baris header tabel utama secara otomatis (mengabaikan judul/logo)
             const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
             
             let headerRowIndex = 0;
@@ -81,7 +160,6 @@ export default function App() {
               }
             }
 
-            // 2. Baca ulang sheet mulai dari baris header dengan pengamanan array kosong
             const rawJson = XLSX.utils.sheet_to_json(worksheet, { range: headerRowIndex, defval: "" });
             const json = Array.isArray(rawJson) ? rawJson.filter(row => {
               return row && Object.values(row).some(val => val !== "" && val !== null && val !== undefined);
@@ -106,7 +184,7 @@ export default function App() {
       setFile1({ fileName: file.name, ...res });
       setSheet1(res.sheetNames[0]);
     } catch (err) {
-      alert("Gagal membaca File 1. Pastikan file berformat Excel/CSV valid.");
+      alert("Gagal membaca File 1. Pastikan file berformat Excel, CSV, atau PDF valid.");
     }
   };
 
@@ -116,7 +194,7 @@ export default function App() {
       setFile2({ fileName: file.name, ...res });
       setSheet2(res.sheetNames[0]);
     } catch (err) {
-      alert("Gagal membaca File 2. Pastikan file berformat Excel/CSV valid.");
+      alert("Gagal membaca File 2. Pastikan file berformat Excel, CSV, atau PDF valid.");
     }
   };
 
@@ -180,7 +258,6 @@ export default function App() {
         evaluatedExpr = evaluatedExpr.replace(regex, val);
       });
 
-      // Validasi ketat ekspresi rumus matematika untuk mencegah code injection
       if (!/^[\d\+\-\*\/\.\(\)\s]+$/.test(evaluatedExpr)) {
         return "Format Rumus Tidak Valid";
       }
@@ -196,8 +273,6 @@ export default function App() {
     if (val === null || val === undefined || val === "") return "-";
     
     const lowerHeader = headerName.toLowerCase();
-    
-    // Pengecualian ketat agar kolom nomor/identitas tidak terformat jadi Rupiah
     const excludeCurrencyKeywords = ['no', 'nomor', 'nik', 'nrk', 'kode', 'id', 'telp', 'phone', 'npwp', 'rekening'];
     const isExcludedFromCurrency = excludeCurrencyKeywords.some(keyword => {
       const regex = new RegExp(`(^|[^a-z])${keyword}([^a-z]|$)`, 'i');
@@ -235,7 +310,6 @@ export default function App() {
         const parts = val.split('T')[0].split('-');
         if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
       }
-      // Penanganan Angka Serial Tanggal Excel (misal: 45288)
       if (typeof val === 'number' && val > 30000 && val < 60000) {
         const utc_days = Math.floor(val - 25569);
         const utc_value = utc_days * 86400;
@@ -256,7 +330,6 @@ export default function App() {
       if (val === null || val === undefined) return "";
       let s = String(val);
       if (config.trimWhitespace) {
-        // Hapus spasi awal/akhir sekaligus rapikan spasi ganda di tengah
         s = s.trim().replace(/\s+/g, ' ');
       }
       if (config.ignoreCase) s = s.toLowerCase();
@@ -568,7 +641,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-lg md:text-xl font-bold tracking-tight text-white">
-                  Sistem Komparasi & Kalkulasi Data Excel
+                  Sistem Komparasi & Kalkulasi Data Excel & PDF
                 </h1>
                 <p className="text-xs text-slate-300 mt-0.5">
                   Dikembangkan untuk Penelitian Skripsi Program Studi Teknik Informatika &mdash; Universitas Bina Sarana Informatika.
@@ -585,10 +658,10 @@ export default function App() {
             <div>
               <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
                 <FileSpreadsheet className="w-5 h-5 text-blue-600" />
-                1. Pilih Mode Kerja & Unggah File
+                1. Pilih Mode Kerja & Unggah File (Excel / CSV / PDF)
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Pilih apakah Anda ingin murni **Mencari Perbedaan** antar file atau melakukan **Kalkulasi/Hitung Rumus**.
+                Pilih apakah Anda ingin murni **Mencari Perbedaan** antar file atau melakukan **Kalkulasi/Hitung Rumus**. Kini mendukung file **PDF**.
               </p>
             </div>
             <button onClick={resetAllData} className="text-xs font-medium text-slate-500 hover:text-rose-600 flex items-center gap-1 self-start md:self-auto px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors">
@@ -627,20 +700,20 @@ export default function App() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
             <div className="border-2 border-dashed border-slate-200 hover:border-amber-400 bg-slate-50/50 rounded-2xl p-4 transition-all relative group">
-              <input type="file" accept=".xlsx, .xls, .csv" onChange={(e) => e.target.files[0] && handleUploadFile1(e.target.files[0])} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+              <input type="file" accept=".xlsx, .xls, .csv, .pdf" onChange={(e) => e.target.files[0] && handleUploadFile1(e.target.files[0])} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
               <div className="flex items-start gap-3">
                 <div className="p-3 bg-amber-100 text-amber-700 rounded-xl flex-shrink-0">
-                  <FileSpreadsheet className="w-6 h-6" />
+                  <FileText className="w-6 h-6" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">
-                    {operationMode === 'CALCULATE' ? 'FILE 1 (OPSIONAL / ACUAN)' : 'FILE 1 (DATA REFERENSI / LAMA)'}
+                    {operationMode === 'CALCULATE' ? 'FILE 1 (OPSIONAL / ACUAN)' : 'FILE 1 (DATA REFERENSI / LAMA - EXCEL/PDF)'}
                   </span>
                   <p className="text-sm font-semibold text-slate-800 truncate mt-0.5">{file1 ? file1.fileName : "Pilih atau drag File 1 ke sini..."}</p>
                   
                   {file1 && (
                     <div className="mt-2.5 relative z-20">
-                      <label className="text-[11px] font-medium text-slate-600 block mb-1">Pilih Sheet File 1:</label>
+                      <label className="text-[11px] font-medium text-slate-600 block mb-1">Pilih Sheet / Halaman:</label>
                       <select value={sheet1} onChange={(e) => setSheet1(e.target.value)} className="w-full bg-white text-xs border border-slate-300 rounded-lg px-2.5 py-1.5">
                         {file1.sheetNames.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
@@ -651,20 +724,20 @@ export default function App() {
             </div>
 
             <div className="border-2 border-dashed border-slate-200 hover:border-blue-400 bg-slate-50/50 rounded-2xl p-4 transition-all relative group">
-              <input type="file" accept=".xlsx, .xls, .csv" onChange={(e) => e.target.files[0] && handleUploadFile2(e.target.files[0])} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+              <input type="file" accept=".xlsx, .xls, .csv, .pdf" onChange={(e) => e.target.files[0] && handleUploadFile2(e.target.files[0])} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
               <div className="flex items-start gap-3">
                 <div className="p-3 bg-blue-100 text-blue-700 rounded-xl flex-shrink-0">
-                  <FileSpreadsheet className="w-6 h-6" />
+                  <FileText className="w-6 h-6" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block">
-                    {operationMode === 'CALCULATE' ? 'FILE 2 (DATA UTAMA YANG DIHITUNG)' : 'FILE 2 (DATA PEMBANDING / BARU)'}
+                    {operationMode === 'CALCULATE' ? 'FILE 2 (DATA UTAMA YANG DIHITUNG)' : 'FILE 2 (DATA PEMBANDING / BARU - EXCEL/PDF)'}
                   </span>
                   <p className="text-sm font-semibold text-slate-800 truncate mt-0.5">{file2 ? file2.fileName : "Pilih atau drag File 2 ke sini..."}</p>
                   
                   {file2 && (
                     <div className="mt-2.5 relative z-20">
-                      <label className="text-[11px] font-medium text-slate-600 block mb-1">Pilih Sheet File 2:</label>
+                      <label className="text-[11px] font-medium text-slate-600 block mb-1">Pilih Sheet / Halaman:</label>
                       <select value={sheet2} onChange={(e) => setSheet2(e.target.value)} className="w-full bg-white text-xs border border-slate-300 rounded-lg px-2.5 py-1.5">
                         {file2.sheetNames.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
@@ -1104,7 +1177,7 @@ export default function App() {
             &copy; {new Date().getFullYear()} <span className="text-indigo-400 font-bold">Taufiq Ismail</span>. All rights reserved.
           </p>
           <p className="text-[10px] text-slate-400">
-            Dibangun dengan React.js, Vite, Tailwind CSS, & SheetJS (xlsx).
+            Dibangun dengan React.js, Vite, Tailwind CSS, SheetJS (xlsx), & PDF.js.
           </p>
         </div>
       </footer>
