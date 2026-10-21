@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import * as pdfjsLib from 'pdfjs-dist';
 import { 
@@ -70,16 +70,13 @@ export default function App() {
       const page = await pdfDoc.getPage(i);
       const textContent = await page.getTextContent();
       
-      // Mengelompokkan teks berdasarkan koordinat vertikal (Y) agar menjadi satu baris tabel yang utuh
       let rowsMap = {};
       textContent.items.forEach(item => {
-        // item.transform[5] adalah posisi koordinat vertikal (Y)
         const yCoord = Math.round(item.transform[5] / 8) * 8; 
         if (!rowsMap[yCoord]) rowsMap[yCoord] = [];
         rowsMap[yCoord].push({ x: item.transform[4], text: item.str.trim() });
       });
 
-      // Urutkan berdasarkan koordinat Y (dari atas ke bawah) lalu koordinat X (dari kiri ke kanan)
       const sortedY = Object.keys(rowsMap).sort((a, b) => Number(b) - Number(a));
       sortedY.forEach(y => {
         const rowItems = rowsMap[y].sort((a, b) => a.x - b.x);
@@ -94,7 +91,6 @@ export default function App() {
       throw new Error("Tidak ada teks yang dapat diekstrak dari file PDF.");
     }
 
-    // Deteksi baris header otomatis di dalam dokumen PDF
     let headerRowIndex = 0;
     for (let i = 0; i < allRows.length; i++) {
       const rowUpper = allRows[i].map(cell => cell.toUpperCase());
@@ -108,7 +104,6 @@ export default function App() {
     const headers = allRows[headerRowIndex] || ['Kolom_1', 'Kolom_2', 'Kolom_3'];
     const dataRows = allRows.slice(headerRowIndex + 1);
 
-    // Ubah format baris array menjadi objek JSON berpasangan dengan Header
     const json = dataRows.map(row => {
       let obj = {};
       headers.forEach((h, idx) => {
@@ -127,7 +122,6 @@ export default function App() {
     return new Promise((resolve, reject) => {
       const fileName = file.name.toLowerCase();
       
-      // Jika file berformat PDF, arahkan ke parser khusus PDF
       if (fileName.endsWith('.pdf')) {
         readPdfData(file)
           .then(res => resolve(res))
@@ -135,7 +129,6 @@ export default function App() {
         return;
       }
 
-      // Jika file berformat Excel / CSV
       const reader = new FileReader();
       reader.onload = (e) => {
         try {
@@ -222,6 +215,23 @@ export default function App() {
     const merged = Array.from(new Set([...h1, ...h2]));
     return merged.filter(col => !col.startsWith('__EMPTY'));
   }, [file1, file2, sheet1, sheet2]);
+
+  // LOGIKA AUTO-DETECT PRIMARY KEY OTOMATIS
+  useEffect(() => {
+    if (commonHeaders.length > 0 && config.primaryKeys.length === 0) {
+      const pkKeywords = ['nik', 'nip', 'nrk', 'id', 'kode', 'no', 'employee', 'nomor'];
+      const foundKey = commonHeaders.find(h => 
+        pkKeywords.some(kw => h.toLowerCase() === kw || h.toLowerCase().includes(kw))
+      );
+      
+      if (foundKey) {
+        setConfig(prev => ({ ...prev, primaryKeys: [foundKey] }));
+      } else if (commonHeaders.length > 0) {
+        // Fallback ke kolom pertama jika keyword tidak ada
+        setConfig(prev => ({ ...prev, primaryKeys: [commonHeaders[0]] }));
+      }
+    }
+  }, [commonHeaders]);
 
   const filteredPkHeaders = useMemo(() => {
     if (!pkSearchQuery.trim()) return commonHeaders;
@@ -661,7 +671,7 @@ export default function App() {
                 1. Pilih Mode Kerja & Unggah File (Excel / CSV / PDF)
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Pilih apakah Anda ingin murni **Mencari Perbedaan** antar file atau melakukan **Kalkulasi/Hitung Rumus**. Kini mendukung file **PDF**.
+                Pilih apakah Anda ingin murni **Mencari Perbedaan** antar file atau melakukan **Kalkulasi/Hitung Rumus**. Primary Key terdeteksi otomatis.
               </p>
             </div>
             <button onClick={resetAllData} className="text-xs font-medium text-slate-500 hover:text-rose-600 flex items-center gap-1 self-start md:self-auto px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors">
@@ -753,7 +763,7 @@ export default function App() {
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
               <Sliders className="w-5 h-5 text-indigo-600" />
-              2. Pengaturan Parameter & Kolom Kunci Acuan
+              2. Pengaturan Parameter & Kolom Kunci Acuan (Auto-Detect)
             </h2>
           </div>
 
