@@ -20,9 +20,6 @@ export default function Header({ appMode, setAppMode, darkMode, setDarkMode }) {
                   <h1 className="text-base font-bold tracking-tight">ReconDoc</h1>
                   <span className="text-indigo-400 font-medium text-xs">| Sistem Rekonsiliasi & Audit Dokumen</span>
                 </div>
-                <p className={`text-[11px] ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                  Universitas Bina Sarana Informatika &bull; Pusat Komparasi & Rekonsiliasi Dokumen Resmi
-                </p>
               </div>
             </div>
 
