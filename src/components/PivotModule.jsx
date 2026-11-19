@@ -1,22 +1,25 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import {
   TableProperties,
-  BarChart3,
-  LayoutGrid,
   Download,
   Upload,
   FileSpreadsheet,
   Search,
   Trash2,
   Layers,
-  GitMerge,
   Plus,
-  X
+  X,
+  ChevronDown,
+  ChevronUp,
+  ArrowRight,
+  ArrowLeft,
+  CheckCircle2,
+  AlertCircle,
+  BookOpen
 } from 'lucide-react';
 import { readFileData, formatCellValue, parseIndonesianNumber } from '../utils/fileHelpers';
 
-// Sinonim umum untuk membantu auto-mapping kolom berbeda antar file
 const COLUMN_ALIASES = {
   'ID / Kode': ['id', 'kode', 'kode barang', 'nik', 'nip', 'nrk', 'no', 'nomor'],
   'Nama / Item': ['nama', 'nama barang', 'item', 'barang', 'produk', 'uraian', 'deskripsi'],
@@ -26,29 +29,25 @@ const COLUMN_ALIASES = {
 };
 
 export default function PivotModule({ darkMode }) {
-  // Daftar file yang diunggah: [{ id, fileName, sheetNames, selectedSheet, sheetsData }]
+  const [currentStep, setCurrentStep] = useState(1);
   const [uploadedFiles, setUploadedFiles] = useState([]);
-
-  // Pemetaan kolom opsional: { [kolomStandar]: { [fileId]: namaKolomAsliDiFile } }
   const [aliasMapping, setAliasMapping] = useState({});
-  const [enableAutoAlias, setEnableAutoAlias] = useState(true);
+  const [showColumnMapper, setShowColumnMapper] = useState(false);
 
-  // Multi-row & Multi-column (keduanya bisa lebih dari 1 kolom)
+  // Masing-masing Row dan Column wajib ditambahkan minimal 1 kolom via tombol +
   const [rowFields, setRowFields] = useState([]);
-  const [extraRowCandidate, setExtraRowCandidate] = useState('');
+  const [rowCandidate, setRowCandidate] = useState('');
+  const [hasAddedRowViaPlus, setHasAddedRowViaPlus] = useState(false);
 
   const [colFields, setColFields] = useState([]);
-  const [extraColCandidate, setExtraColCandidate] = useState('');
+  const [colCandidate, setColCandidate] = useState('');
+  const [hasAddedColViaPlus, setHasAddedColViaPlus] = useState(false);
 
   const [valueField, setValueField] = useState('');
   const [aggType, setAggType] = useState('COUNT'); // 'COUNT' | 'SUM' | 'AVG'
-  const [viewMode, setViewMode] = useState('BOTH'); // 'BOTH' | 'TABLE' | 'CHART'
   const [searchRow, setSearchRow] = useState('');
-  const [sortBy, setSortBy] = useState('TOTAL_DESC'); // 'TOTAL_DESC' | 'TOTAL_ASC' | 'LABEL_ASC'
+  const [sortBy, setSortBy] = useState('TOTAL_DESC');
 
-  const chartSvgRef = useRef(null);
-
-  // Unggah 1 atau beberapa file sekaligus
   const handleAddFiles = async (fileList) => {
     const filesArray = Array.from(fileList || []);
     if (!filesArray.length) return;
@@ -57,21 +56,20 @@ export default function PivotModule({ darkMode }) {
     for (const file of filesArray) {
       const lower = file.name.toLowerCase();
       if (!lower.endsWith('.xlsx') && !lower.endsWith('.xls') && !lower.endsWith('.csv')) {
-        alert(`⚠️ File "${file.name}" diabaikan karena bukan format .xlsx, .xls, atau .csv.`);
+        alert(`File "${file.name}" diabaikan. Gunakan format .xlsx, .xls, atau .csv.`);
         continue;
       }
       try {
         const res = await readFileData(file);
-        const firstSheet = res.sheetNames[0] || '';
         validFiles.push({
           id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           fileName: file.name,
           sheetNames: res.sheetNames,
-          selectedSheet: firstSheet,
+          selectedSheet: res.sheetNames[0] || '',
           sheetsData: res.sheetsData
         });
       } catch (err) {
-        alert(`Gagal membaca file "${file.name}". Pastikan file valid.`);
+        alert(`Gagal membaca file "${file.name}".`);
       }
     }
 
@@ -93,14 +91,18 @@ export default function PivotModule({ darkMode }) {
   const handleClearAllFiles = () => {
     setUploadedFiles([]);
     setAliasMapping({});
+    setShowColumnMapper(false);
     setRowFields([]);
-    setExtraRowCandidate('');
+    setRowCandidate('');
+    setHasAddedRowViaPlus(false);
     setColFields([]);
-    setExtraColCandidate('');
+    setColCandidate('');
+    setHasAddedColViaPlus(false);
     setValueField('');
+    setSearchRow('');
+    setCurrentStep(1);
   };
 
-  // Header asli per file pada sheet yang dipilih
   const fileHeadersMap = useMemo(() => {
     const map = {};
     uploadedFiles.forEach((f) => {
@@ -116,9 +118,9 @@ export default function PivotModule({ darkMode }) {
     return map;
   }, [uploadedFiles]);
 
-  // Sinkronkan auto-alias saat file/sheet berubah
+  // Auto-mapping cerdas di latar belakang agar kolom mirip otomatis menyatu
   useEffect(() => {
-    if (!enableAutoAlias || uploadedFiles.length === 0) return;
+    if (uploadedFiles.length === 0) return;
 
     setAliasMapping((prev) => {
       const next = { ...prev };
@@ -133,14 +135,12 @@ export default function PivotModule({ darkMode }) {
             const lh = h.toLowerCase().trim();
             return keywords.some((kw) => lh === kw || lh.includes(kw));
           });
-          if (matched) {
-            next[stdCol][f.id] = matched;
-          }
+          if (matched) next[stdCol][f.id] = matched;
         });
       });
       return next;
     });
-  }, [uploadedFiles, fileHeadersMap, enableAutoAlias]);
+  }, [uploadedFiles, fileHeadersMap]);
 
   const handleManualAliasChange = (stdCol, fileId, sourceHeader) => {
     setAliasMapping((prev) => ({
@@ -152,17 +152,15 @@ export default function PivotModule({ darkMode }) {
     }));
   };
 
-  // TAHAP PENYATUAN OTOMATIS: Gabungkan semua file menjadi 1 dataset terpadu
+  // Satukan otomatis semua file menjadi 1 dataset gabungan
   const mergedDataset = useMemo(() => {
     if (!uploadedFiles.length) return [];
 
     const combined = [];
-    const activeStandardCols = enableAutoAlias
-      ? Object.keys(COLUMN_ALIASES).filter((stdCol) => {
-          const perFile = aliasMapping[stdCol] || {};
-          return Object.values(perFile).some((v) => Boolean(v));
-        })
-      : [];
+    const activeStandardCols = Object.keys(COLUMN_ALIASES).filter((stdCol) => {
+      const perFile = aliasMapping[stdCol] || {};
+      return Object.values(perFile).some((v) => Boolean(v));
+    });
 
     uploadedFiles.forEach((f) => {
       const rawRows = f.sheetsData?.[f.selectedSheet] || [];
@@ -174,45 +172,25 @@ export default function PivotModule({ darkMode }) {
         };
 
         Object.keys(raw || {}).forEach((k) => {
-          if (!k.startsWith('__EMPTY')) {
-            cleanRow[k] = raw[k];
-          }
+          if (!k.startsWith('__EMPTY')) cleanRow[k] = raw[k];
         });
 
-        if (enableAutoAlias) {
-          activeStandardCols.forEach((stdCol) => {
-            const mappedCol = aliasMapping[stdCol]?.[f.id];
-            if (mappedCol) {
-              cleanRow[stdCol] = raw[mappedCol] ?? '';
-            } else if (!(stdCol in cleanRow)) {
-              cleanRow[stdCol] = '';
-            }
-          });
-        }
+        activeStandardCols.forEach((stdCol) => {
+          const mappedCol = aliasMapping[stdCol]?.[f.id];
+          if (mappedCol) {
+            cleanRow[stdCol] = raw[mappedCol] ?? '';
+          } else if (!(stdCol in cleanRow)) {
+            cleanRow[stdCol] = '';
+          }
+        });
 
         combined.push(cleanRow);
       });
     });
 
     return combined;
-  }, [uploadedFiles, aliasMapping, enableAutoAlias]);
+  }, [uploadedFiles, aliasMapping]);
 
-  // Unduh khusus file Excel hasil penyatuan multi-file (1 dataset gabungan)
-  const exportMergedOnlyToExcel = () => {
-    if (!mergedDataset.length) {
-      alert('Belum ada data gabungan yang bisa diunduh.');
-      return;
-    }
-
-    const wb = XLSX.utils.book_new();
-    const wsMerged = XLSX.utils.json_to_sheet(mergedDataset);
-    XLSX.utils.book_append_sheet(wb, wsMerged, 'Data_Gabungan');
-
-    const timestamp = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `Gabungan_Excel_${uploadedFiles.length}_File_${timestamp}.xlsx`);
-  };
-
-  // Daftar kolom tersedia dari dataset yang sudah disatukan
   const mergedFields = useMemo(() => {
     if (!mergedDataset.length) return [];
     const set = new Set();
@@ -220,95 +198,106 @@ export default function PivotModule({ darkMode }) {
     return Array.from(set);
   }, [mergedDataset]);
 
+  // Bersihkan pilihan yang sudah tidak ada di mergedFields & siapkan kandidat awal
   useEffect(() => {
-    if (!mergedFields.length) return;
+    if (!mergedFields.length) {
+      setRowFields([]);
+      setColFields([]);
+      setHasAddedRowViaPlus(false);
+      setHasAddedColViaPlus(false);
+      return;
+    }
 
     setRowFields((prev) => {
-      const validExisting = prev.filter((f) => mergedFields.includes(f));
-      if (validExisting.length > 0) return validExisting;
-
-      const preferred = mergedFields.find((f) =>
-        ['client', 'klien', 'kategori / divisi', 'nama / item', 'sumber file', 'divisi', 'kategori', 'status', 'cabang'].includes(
-          f.toLowerCase()
-        )
-      );
-      return [preferred || mergedFields[0]];
+      const valid = prev.filter((f) => mergedFields.includes(f));
+      if (valid.length === 0) setHasAddedRowViaPlus(false);
+      return valid;
     });
 
-    setColFields((prev) => prev.filter((f) => mergedFields.includes(f)));
+    setColFields((prev) => {
+      const valid = prev.filter((f) => mergedFields.includes(f));
+      if (valid.length === 0) setHasAddedColViaPlus(false);
+      return valid;
+    });
 
-    if (valueField && !mergedFields.includes(valueField)) {
+    if (!rowCandidate || !mergedFields.includes(rowCandidate)) {
+      const preferredRow = mergedFields.find((f) =>
+        ['client', 'klien', 'nama / item', 'barang', 'item', 'cabang'].includes(f.toLowerCase())
+      );
+      setRowCandidate(preferredRow || mergedFields[0]);
+    }
+
+    if (!colCandidate || !mergedFields.includes(colCandidate)) {
+      const preferredCol = mergedFields.find((f) =>
+        ['status', 'kategori / divisi', 'kategori', 'divisi', 'unit', 'departemen'].includes(f.toLowerCase())
+      );
+      setColCandidate(preferredCol || mergedFields[1] || mergedFields[0]);
+    }
+
+    if (!valueField || !mergedFields.includes(valueField)) {
       const numCandidate = mergedFields.find((f) =>
-        ['jumlah / qty', 'nilai / nominal', 'jumlah', 'qty', 'total', 'nilai'].includes(f.toLowerCase())
+        ['jumlah / qty', 'nilai / nominal', 'jumlah', 'qty', 'total', 'nilai', 'nominal', 'biaya', 'tagihan'].includes(
+          f.toLowerCase()
+        )
       );
       setValueField(numCandidate || '');
     }
   }, [mergedFields]);
 
-  // Helper Multi-Row
-  const handleUpdateRowFieldAt = (index, nextCol) => {
-    setRowFields((prev) => {
-      const copy = [...prev];
-      copy[index] = nextCol;
-      return Array.from(new Set(copy.filter(Boolean)));
-    });
-  };
+  const handleAddRowViaPlus = () => {
+    const target = rowCandidate || mergedFields.find((f) => !rowFields.includes(f)) || '';
+    if (!target) return;
+    if (rowFields.includes(target)) {
+      setHasAddedRowViaPlus(true);
+      return;
+    }
+    const nextRows = [...rowFields, target];
+    setRowFields(nextRows);
+    setHasAddedRowViaPlus(true);
 
-  const handleAddExtraRowField = () => {
-    const candidate = extraRowCandidate || mergedFields.find((f) => !rowFields.includes(f)) || '';
-    if (!candidate || rowFields.includes(candidate)) return;
-    setRowFields((prev) => [...prev, candidate]);
-    setExtraRowCandidate('');
+    const nextAvailable = mergedFields.find((f) => !nextRows.includes(f));
+    setRowCandidate(nextAvailable || '');
   };
 
   const handleRemoveRowFieldAt = (index) => {
     setRowFields((prev) => {
-      if (prev.length <= 1) return prev;
-      return prev.filter((_, idx) => idx !== index);
+      const updated = prev.filter((_, idx) => idx !== index);
+      if (updated.length === 0) {
+        setHasAddedRowViaPlus(false);
+      }
+      return updated;
     });
   };
 
-  // Helper Multi-Column
-  const handleUpdateColFieldAt = (index, nextCol) => {
-    if (!nextCol) {
-      handleRemoveColFieldAt(index);
+  const handleAddColViaPlus = () => {
+    const target = colCandidate || mergedFields.find((f) => !colFields.includes(f)) || '';
+    if (!target) return;
+    if (colFields.includes(target)) {
+      setHasAddedColViaPlus(true);
       return;
     }
-    setColFields((prev) => {
-      const copy = [...prev];
-      copy[index] = nextCol;
-      return Array.from(new Set(copy.filter(Boolean)));
-    });
-  };
+    const nextCols = [...colFields, target];
+    setColFields(nextCols);
+    setHasAddedColViaPlus(true);
 
-  const handleAddExtraColField = () => {
-    const candidate =
-      extraColCandidate ||
-      mergedFields.find((f) => !colFields.includes(f) && !rowFields.includes(f)) ||
-      mergedFields.find((f) => !colFields.includes(f)) ||
-      '';
-    if (!candidate || colFields.includes(candidate)) return;
-    setColFields((prev) => [...prev, candidate]);
-    setExtraColCandidate('');
+    const nextAvailable = mergedFields.find((f) => !nextCols.includes(f));
+    setColCandidate(nextAvailable || '');
   };
 
   const handleRemoveColFieldAt = (index) => {
-    setColFields((prev) => prev.filter((_, idx) => idx !== index));
+    setColFields((prev) => {
+      const updated = prev.filter((_, idx) => idx !== index);
+      if (updated.length === 0) {
+        setHasAddedColViaPlus(false);
+      }
+      return updated;
+    });
   };
 
-  const rowLabelHeader = useMemo(() => {
-    if (!rowFields.length) return 'Kelompok Baris';
-    return rowFields.join(' › ');
-  }, [rowFields]);
+  const rowLabelHeader = useMemo(() => (rowFields.length ? rowFields.join(' & ') : 'Kelompok Baris'), [rowFields]);
 
-  const colLabelHeader = useMemo(() => {
-    if (!colFields.length) return '';
-    return colFields.join(' › ');
-  }, [colFields]);
-
-  // Kalkulasi Pivot Table dari mergedDataset (mendukung multi-row & multi-column)
   const pivotData = useMemo(() => {
-    if (!mergedDataset.length || !rowFields.length) {
+    if (!mergedDataset.length || !rowFields.length || !colFields.length) {
       return { rowKeys: [], rowPartsMap: {}, colKeys: [], matrix: {}, rowTotals: {}, colTotals: {}, grandTotal: 0 };
     }
 
@@ -326,11 +315,8 @@ export default function PivotModule({ darkMode }) {
 
       rowPartsMap[rKey] = rParts;
 
-      const cKey = colFields.length > 0
-        ? colFields.map((f) => String(row[f] ?? '').trim() || '(Kosong)').join(' › ')
-        : 'Nilai';
-
-      if (colFields.length > 0) colSet.add(cKey);
+      const cKey = colFields.map((f) => String(row[f] ?? '').trim() || '(Kosong)').join(' › ');
+      colSet.add(cKey);
 
       let val = 1;
       if (aggType !== 'COUNT') {
@@ -352,7 +338,7 @@ export default function PivotModule({ darkMode }) {
       return Number(sum.toFixed(2));
     };
 
-    const colKeys = colFields.length > 0 ? Array.from(colSet) : ['Nilai'];
+    const colKeys = Array.from(colSet);
     const rowKeys = Array.from(rowMap.keys());
 
     const matrix = {};
@@ -370,7 +356,7 @@ export default function PivotModule({ darkMode }) {
       let rBucket = [];
 
       colKeys.forEach((c) => {
-        const bucket = colFields.length > 0 ? (cMap.get(c) || []) : (cMap.get('Nilai') || []);
+        const bucket = cMap.get(c) || [];
         matrix[r][c] = aggregate(bucket);
         if (bucket.length) {
           rBucket = rBucket.concat(bucket);
@@ -405,200 +391,265 @@ export default function PivotModule({ darkMode }) {
     return formatCellValue(valueField || 'Nilai', val);
   };
 
-  // Ekspor Pivot (multi-row & multi-column) + Data Gabungan ke 1 file Excel (.xlsx)
-  const exportPivotAndMergedToExcel = () => {
-    if (!pivotData.rowKeys.length) {
-      alert('Belum ada data pivot untuk diekspor.');
-      return;
-    }
+  const exportMergedOnlyToExcel = () => {
+    if (!mergedDataset.length) return;
+    const wb = XLSX.utils.book_new();
+    const wsMerged = XLSX.utils.json_to_sheet(mergedDataset);
+    XLSX.utils.book_append_sheet(wb, wsMerged, 'Data_Gabungan');
+    XLSX.writeFile(wb, `Gabungan_Excel_${uploadedFiles.length}_File.xlsx`);
+  };
 
-    const pivotSheetRows = pivotData.rowKeys.map((rKey) => {
+  const exportPivotAndMergedToExcel = () => {
+    if (!pivotData.rowKeys.length) return;
+
+    const isCurrency =
+      aggType !== 'COUNT' &&
+      /nilai|nominal|harga|subtotal|total|amount|gaji|biaya|tagihan|rupiah|rp/i.test(valueField || '');
+
+    const numFormat = aggType === 'COUNT' ? '#,##0' : isCurrency ? '"Rp"#,##0' : '#,##0.##';
+
+    const dataRows = pivotData.rowKeys.map((rKey) => {
       const rParts = pivotData.rowPartsMap[rKey] || [rKey];
       const obj = {};
+
       rowFields.forEach((rf, idx) => {
         obj[rf] = rParts[idx] ?? '';
       });
-      if (rowFields.length > 1) {
-        obj[rowLabelHeader] = rKey;
-      }
+
       pivotData.colKeys.forEach((cKey) => {
-        obj[cKey] = pivotData.matrix[rKey][cKey];
+        obj[cKey] = Number(pivotData.matrix[rKey][cKey] ?? 0);
       });
-      if (colFields.length > 0) {
-        obj['Total Baris'] = pivotData.rowTotals[rKey];
+
+      if (pivotData.colKeys.length > 1) {
+        obj['Total'] = Number(pivotData.rowTotals[rKey] ?? 0);
       }
+
       return obj;
     });
 
-    const grandTotalRow = {};
+    const grandTotalObj = {};
     rowFields.forEach((rf, idx) => {
-      grandTotalRow[rf] = idx === 0 ? 'Grand Total' : '';
+      grandTotalObj[rf] = idx === 0 ? 'Grand Total' : '';
     });
-    if (rowFields.length > 1) {
-      grandTotalRow[rowLabelHeader] = 'Grand Total';
-    }
+
     pivotData.colKeys.forEach((cKey) => {
-      grandTotalRow[cKey] = pivotData.colTotals[cKey];
+      grandTotalObj[cKey] = Number(pivotData.colTotals[cKey] ?? 0);
     });
-    if (colFields.length > 0) {
-      grandTotalRow['Total Baris'] = pivotData.grandTotal;
+
+    if (pivotData.colKeys.length > 1) {
+      grandTotalObj['Total'] = Number(pivotData.grandTotal ?? 0);
     }
-    pivotSheetRows.push(grandTotalRow);
+
+    const allHeaders = [
+      ...rowFields,
+      ...pivotData.colKeys,
+      ...(pivotData.colKeys.length > 1 ? ['Total'] : [])
+    ];
+
+    const sheetMatrix = [
+      [`LAPORAN PIVOT — ${rowLabelHeader.toUpperCase()}`],
+      [
+        `Perhitungan: ${aggType}${valueField && aggType !== 'COUNT' ? ` (${valueField})` : ''} | Grand Total: ${formatMetric(pivotData.grandTotal)}`
+      ],
+      [],
+      allHeaders,
+      ...dataRows.map((row) => allHeaders.map((h) => row[h] ?? '')),
+      allHeaders.map((h) => grandTotalObj[h] ?? '')
+    ];
+
+    const wsPivot = XLSX.utils.aoa_to_sheet(sheetMatrix);
+
+    const firstValueColIdx = rowFields.length;
+    const lastValueColIdx = allHeaders.length - 1;
+    const startDataRowIdx = 4;
+    const endGrandTotalRowIdx = 4 + dataRows.length;
+
+    for (let r = startDataRowIdx; r <= endGrandTotalRowIdx; r++) {
+      for (let c = firstValueColIdx; c <= lastValueColIdx; c++) {
+        const cellRef = XLSX.utils.encode_cell({ r, c });
+        const cell = wsPivot[cellRef];
+        if (cell && typeof cell.v === 'number') {
+          cell.t = 'n';
+          cell.z = numFormat;
+        }
+      }
+    }
+
+    wsPivot['!cols'] = allHeaders.map((h) => {
+      const maxLen = Math.max(
+        String(h).length,
+        ...dataRows.map((r) => String(r[h] ?? '').length),
+        String(grandTotalObj[h] ?? '').length
+      );
+      return { wch: Math.min(Math.max(maxLen + 4, 14), 42) };
+    });
 
     const wb = XLSX.utils.book_new();
-    const wsPivot = XLSX.utils.json_to_sheet(pivotSheetRows);
-    XLSX.utils.book_append_sheet(wb, wsPivot, 'Pivot_Hasil');
+    XLSX.utils.book_append_sheet(wb, wsPivot, 'Ringkasan_Pivot');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(mergedDataset), 'Data_Gabungan');
 
-    const wsMerged = XLSX.utils.json_to_sheet(mergedDataset);
-    XLSX.utils.book_append_sheet(wb, wsMerged, 'Data_Gabungan_1_File');
-
-    const safeCol = rowLabelHeader.replace(/[^a-zA-Z0-9_-]/g, '_');
-    XLSX.writeFile(wb, `Pivot_Gabungan_${safeCol}.xlsx`);
+    XLSX.writeFile(wb, `Pivot_${rowLabelHeader.replace(/[^a-zA-Z0-9_-]/g, '_')}.xlsx`);
   };
 
-  const downloadChartPng = () => {
-    const svg = chartSvgRef.current;
-    if (!svg || !pivotData.rowKeys.length) return;
+  const hasData = mergedDataset.length > 0;
+  // Row dan Column masing-masing wajib minimal 1 kolom yang ditambahkan lewat tombol +
+  const canProceedFromStep2 =
+    hasData &&
+    hasAddedRowViaPlus &&
+    rowFields.length >= 1 &&
+    hasAddedColViaPlus &&
+    colFields.length >= 1;
 
-    const serializer = new XMLSerializer();
-    const svgString = serializer.serializeToString(svg);
-    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(svgBlob);
+  const hasMetric = canProceedFromStep2 && (aggType === 'COUNT' || Boolean(valueField));
+  const hasResult = pivotData.rowKeys.length > 0;
 
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = svg.clientWidth * 2 || 1200;
-      canvas.height = svg.clientHeight * 2 || 700;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = darkMode ? '#090d16' : '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const stepTabs = [
+    { step: 1, label: 'Step 1: Unggah File', unlocked: true, done: hasData },
+    { step: 2, label: 'Step 2: Baris & Kolom', unlocked: hasData, done: canProceedFromStep2 },
+    { step: 3, label: 'Step 3: Cara Hitung', unlocked: canProceedFromStep2, done: hasMetric },
+    { step: 4, label: 'Step 4: Tabel Pivot', unlocked: hasMetric, done: hasResult }
+  ];
 
-      const link = document.createElement('a');
-      link.download = `Grafik_Pivot_${rowLabelHeader.replace(/\s+/g, '_')}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
-      URL.revokeObjectURL(url);
-    };
-    img.src = url;
-  };
-
-  const maxBarValue = useMemo(() => {
-    if (!pivotData.rowKeys.length) return 1;
-    let maxV = 0;
-    pivotData.rowKeys.forEach((r) => {
-      const v = colFields.length > 0
-        ? Number(pivotData.rowTotals[r] || 0)
-        : Number(pivotData.matrix[r]?.['Nilai'] || 0);
-      if (v > maxV) maxV = v;
-    });
-    return maxV > 0 ? maxV : 1;
-  }, [pivotData, colFields]);
-
-  const chartPalette = ['#6366f1', '#10b981', '#f59e0b', '#3b82f6', '#ec4899', '#8b5cf6'];
   const remainingRowOptions = mergedFields.filter((f) => !rowFields.includes(f));
   const remainingColOptions = mergedFields.filter((f) => !colFields.includes(f));
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Langkah 1: Unggah Beberapa File Excel/CSV */}
-      <section className={`rounded-3xl border shadow-sm p-6 space-y-5 ${darkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'}`}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/70">
-          <div>
-            <h2 className="text-base font-bold flex items-center gap-2">
-              <div className="p-1.5 bg-purple-500/10 text-purple-400 rounded-xl">
-                <GitMerge className="w-4 h-4" />
-              </div>
-              Multi-File Auto-Merge & Pivot Table (Multi-Row & Multi-Column)
-            </h2>
-            <p className={`text-xs mt-0.5 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-              Unggah beberapa file Excel/CSV (meski format kolomnya berbeda). Sistem menyatukannya otomatis menjadi 1 data gabungan sebelum diproses Pivot.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {uploadedFiles.length > 0 && (
+      {/* NAVIGASI STEP BY STEP (1 -> 2 -> 3 -> 4) */}
+      <div className={`rounded-3xl border p-3 shadow-sm ${darkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'}`}>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+          {stepTabs.map((t) => {
+            const isActive = currentStep === t.step;
+            return (
               <button
-                onClick={handleClearAllFiles}
-                className="px-3.5 py-2 rounded-xl border border-slate-700 hover:bg-rose-950/40 hover:text-rose-300 text-xs font-semibold transition-all"
+                key={t.step}
+                type="button"
+                disabled={!t.unlocked}
+                onClick={() => setCurrentStep(t.step)}
+                className={`px-3.5 py-2.5 rounded-2xl text-left transition-all flex items-center justify-between gap-2 disabled:opacity-40 disabled:cursor-not-allowed ${
+                  isActive
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : darkMode
+                      ? 'bg-slate-950/60 text-slate-300 hover:bg-slate-800'
+                      : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
+                }`}
               >
-                Hapus Semua File
+                <span className="text-xs font-bold truncate">{t.label}</span>
+                {t.done && (
+                  <CheckCircle2 className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-emerald-400'}`} />
+                )}
               </button>
-            )}
-
-            {mergedDataset.length > 0 && (
-              <button
-                onClick={exportMergedOnlyToExcel}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-2xl shadow-md transition-all"
-              >
-                <Download className="w-4 h-4" />
-                <span>Unduh Gabungan ({mergedDataset.length} baris)</span>
-              </button>
-            )}
-
-            <button
-              onClick={exportPivotAndMergedToExcel}
-              disabled={!pivotData.rowKeys.length}
-              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-2xl shadow-md transition-all"
-            >
-              <Download className="w-4 h-4" />
-              <span>Ekspor Pivot (.xlsx)</span>
-            </button>
-          </div>
+            );
+          })}
         </div>
+      </div>
 
-        {/* Dropzone Multiple Files */}
-        <div className={`border-2 border-dashed rounded-3xl p-5 transition-all relative group overflow-hidden ${darkMode ? 'border-slate-800 bg-slate-950/40 hover:border-purple-500/50' : 'border-slate-200 bg-slate-50/50 hover:border-purple-400'}`}>
-          <input
-            type="file"
-            multiple
-            accept=".xlsx, .xls, .csv"
-            onChange={(e) => {
-              handleAddFiles(e.target.files);
-              e.target.value = '';
-            }}
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-          />
-          <div className="flex items-center gap-4">
-            <div className="p-3.5 bg-purple-500/10 text-purple-400 rounded-2xl flex-shrink-0">
-              <Upload className="w-6 h-6" />
-            </div>
+      {/* STEP 1: UNGGAH FILE */}
+      {currentStep === 1 && (
+        <section className={`rounded-3xl border shadow-sm p-6 space-y-5 ${darkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'}`}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/70">
             <div>
-              <span className="text-[10px] font-bold text-purple-400 uppercase tracking-widest block mb-1">
-                UNGGAH BEBERAPA FILE SEKALIGUS (MULTI-SELECT)
+              <span className="text-[10px] font-bold uppercase tracking-widest text-purple-400">
+                STEP 1 DARI 4
               </span>
-              <p className={`text-sm font-semibold ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>
-                Klik atau seret 2 atau lebih file Excel (.xlsx, .xls) / CSV untuk digabung otomatis...
-              </p>
-              <span className="text-[11px] text-slate-400 block mt-0.5">
-                {uploadedFiles.length > 0
-                  ? `${uploadedFiles.length} file terunggah • Total ${mergedDataset.length} baris setelah disatukan menjadi 1 data`
-                  : 'Belum ada file yang diunggah'}
-              </span>
+              <h2 className="text-base font-bold flex items-center gap-2 mt-0.5">
+                <TableProperties className="w-4 h-4 text-purple-400" />
+                Unggah & Satukan File Data
+              </h2>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {mergedDataset.length > 0 && (
+                <button
+                  type="button"
+                  onClick={exportMergedOnlyToExcel}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-2xl shadow-sm transition-all"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Unduh Gabungan ({mergedDataset.length} baris)</span>
+                </button>
+              )}
+
+              {uploadedFiles.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearAllFiles}
+                  className="px-3 py-2 rounded-2xl border border-slate-700 hover:bg-rose-950/40 hover:text-rose-300 text-xs font-semibold transition-all"
+                >
+                  Reset
+                </button>
+              )}
             </div>
           </div>
-        </div>
 
-        {/* Daftar File Terunggah & Pilih Sheet */}
-        {uploadedFiles.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {uploadedFiles.map((f) => {
-              const rowCount = (f.sheetsData?.[f.selectedSheet] || []).length;
-              return (
-                <div
-                  key={f.id}
-                  className={`p-3.5 rounded-2xl border flex flex-col justify-between gap-2.5 ${darkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50 border-slate-200'}`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
+          {/* PENJELASAN STEP 1 */}
+          <div className={`p-4 rounded-2xl border flex items-start gap-3 text-xs leading-relaxed ${darkMode ? 'bg-purple-950/20 border-purple-500/30 text-slate-300' : 'bg-purple-50/70 border-purple-200 text-slate-700'}`}>
+            <BookOpen className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="font-bold text-purple-300">Penjelasan Step 1:</p>
+              <p>
+                Tahap ini berfungsi membaca isi file spreadsheet (.xlsx, .xls, atau .csv) langsung di browser Anda tanpa menyimpannya ke database. Jika Anda mengunggah lebih dari satu file, seluruh baris dari sheet terpilih akan otomatis digabung menjadi satu dataset utuh. Bila ada nama kolom yang berbeda antar file, Anda juga bisa menyamakannya lewat menu penyesuaian kolom.
+              </p>
+            </div>
+          </div>
+
+          <div className={`border-2 border-dashed rounded-3xl p-5 transition-all relative group overflow-hidden ${darkMode ? 'border-slate-800 bg-slate-950/40 hover:border-purple-500/50' : 'border-slate-200 bg-slate-50/50 hover:border-purple-400'}`}>
+            <input
+              type="file"
+              multiple
+              accept=".xlsx, .xls, .csv"
+              onChange={(e) => {
+                handleAddFiles(e.target.files);
+                e.target.value = '';
+              }}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+            />
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-purple-500/10 text-purple-400 rounded-2xl flex-shrink-0">
+                <Upload className="w-6 h-6" />
+              </div>
+              <div>
+                <p className={`text-sm font-semibold ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                  Klik atau seret file Excel (.xlsx, .xls) / CSV di sini...
+                </p>
+                <span className="text-[11px] text-slate-400 block mt-0.5">
+                  {uploadedFiles.length > 0
+                    ? `${uploadedFiles.length} file aktif • Total ${mergedDataset.length} baris sudah disatukan`
+                    : 'Bisa pilih 1 file atau banyak file sekaligus'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {uploadedFiles.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {uploadedFiles.map((f) => {
+                const rowCount = (f.sheetsData?.[f.selectedSheet] || []).length;
+                return (
+                  <div
+                    key={f.id}
+                    className={`p-3 rounded-2xl border flex items-center justify-between gap-2 ${darkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50 border-slate-200'}`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
                       <FileSpreadsheet className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p className="text-xs font-bold truncate">{f.fileName}</p>
-                        <p className="text-[10px] text-slate-400">{rowCount} baris</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <select
+                            value={f.selectedSheet}
+                            onChange={(e) => handleChangeSheet(f.id, e.target.value)}
+                            className={`text-[11px] rounded-lg border px-2 py-0.5 max-w-[140px] ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-200' : 'bg-white border-slate-300 text-slate-800'}`}
+                          >
+                            {f.sheetNames.map((s) => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
+                          <span className="text-[10px] text-slate-400">{rowCount} baris</span>
+                        </div>
                       </div>
                     </div>
                     <button
+                      type="button"
                       onClick={() => handleRemoveFile(f.id)}
                       className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10"
                       title="Hapus file"
@@ -606,337 +657,400 @@ export default function PivotModule({ darkMode }) {
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
+                );
+              })}
+            </div>
+          )}
 
-                  <div>
-                    <label className="text-[10px] text-slate-400 block mb-1">Sheet:</label>
-                    <select
-                      value={f.selectedSheet}
-                      onChange={(e) => handleChangeSheet(f.id, e.target.value)}
-                      className={`w-full text-xs rounded-xl border px-2.5 py-1.5 ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-300 text-slate-800'}`}
+          {uploadedFiles.length >= 2 && (
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={() => setShowColumnMapper((prev) => !prev)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-indigo-400 hover:text-indigo-300"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Penyesuaian Kolom Beda Nama Antar File (Opsional)</span>
+                {showColumnMapper ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+
+              {showColumnMapper && (
+                <div className={`mt-3 p-4 rounded-2xl border grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 ${darkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-indigo-50/40 border-indigo-200'}`}>
+                  {Object.keys(COLUMN_ALIASES).map((stdCol) => (
+                    <div
+                      key={stdCol}
+                      className={`p-3 rounded-xl border space-y-2 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}
                     >
-                      {f.sheetNames.map((s) => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </select>
-                  </div>
+                      <div className="text-[11px] font-bold text-indigo-400">{stdCol}</div>
+                      {uploadedFiles.map((f) => {
+                        const headers = fileHeadersMap[f.id] || [];
+                        const currentVal = aliasMapping[stdCol]?.[f.id] || '';
+                        return (
+                          <div key={f.id} className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="truncate max-w-[100px] text-slate-400" title={f.fileName}>
+                              {f.fileName}
+                            </span>
+                            <select
+                              value={currentVal}
+                              onChange={(e) => handleManualAliasChange(stdCol, f.id, e.target.value)}
+                              className={`flex-1 text-[11px] rounded-lg border px-2 py-1 ${darkMode ? 'bg-slate-950 border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
+                            >
+                              <option value="">-- Otomatis --</option>
+                              {headers.map((h) => (
+                                <option key={h} value={h}>{h}</option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
                 </div>
-              );
-            })}
-          </div>
-        )}
+              )}
+            </div>
+          )}
 
-        {/* Pemetaan Kolom Beda Format Antar File */}
-        {uploadedFiles.length >= 2 && (
-          <div className={`p-4 rounded-2xl border space-y-3 ${darkMode ? 'bg-slate-950/50 border-slate-800' : 'bg-indigo-50/40 border-indigo-200'}`}>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="pt-3 border-t border-slate-800/70 flex justify-end">
+            <button
+              type="button"
+              disabled={!hasData}
+              onClick={() => setCurrentStep(2)}
+              className="flex items-center gap-1.5 px-4 py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-2xl shadow-sm transition-all"
+            >
+              <span>Lanjut ke Step 2: Baris & Kolom</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* STEP 2: PILIH KELOMPOK ROW & COLUMN (MASING-MASING WAJIB MINIMAL 1 KOLOM VIA TOMBOL +) */}
+      {currentStep === 2 && mergedFields.length > 0 && (
+        <section className={`rounded-3xl border shadow-sm p-6 space-y-5 ${darkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'}`}>
+          <div className="pb-4 border-b border-slate-800/70">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">
+              STEP 2 DARI 4
+            </span>
+            <h3 className="text-base font-bold mt-0.5">Menentukan Struktur Baris (Rows) & Kolom (Columns)</h3>
+          </div>
+
+          {/* PENJELASAN STEP 2 */}
+          <div className={`p-4 rounded-2xl border flex items-start gap-3 text-xs leading-relaxed ${darkMode ? 'bg-indigo-950/20 border-indigo-500/30 text-slate-300' : 'bg-indigo-50/70 border-indigo-200 text-slate-700'}`}>
+            <BookOpen className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="font-bold text-indigo-300">Penjelasan Step 2:</p>
+              <p>
+                Pada tabel pivot, <strong>Rows</strong> menentukan kategori yang disusun ke bawah sebagai baris, sedangkan <strong>Columns</strong> menentukan kategori yang disebarkan ke samping sebagai kolom silang. Agar struktur tabel terbentuk jelas, masing-masing <strong>Rows</strong> dan <strong>Columns</strong> wajib ditambahkan minimal satu kolom dengan memilih kolomnya lalu menekan tombol <strong>+</strong>.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+            {/* ROWS — WAJIB MINIMAL 1 VIA + ROW */}
+            <div className={`p-4 rounded-2xl border space-y-3 ${darkMode ? 'bg-slate-950/50 border-slate-800' : 'bg-slate-50/70 border-slate-200'}`}>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-purple-400">
+                  1. Kelompok Baris (Rows) — Wajib min. 1 via +
+                </label>
+                <span className="text-[10px] font-semibold text-slate-400">{rowFields.length} kolom</span>
+              </div>
+
               <div className="flex items-center gap-2">
-                <Layers className="w-4 h-4 text-indigo-400" />
-                <span className="text-xs font-bold">Penyatuan Kolom Beda Nama / Format Antar File</span>
-              </div>
-              <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={enableAutoAlias}
-                  onChange={(e) => setEnableAutoAlias(e.target.checked)}
-                  className="w-4 h-4 accent-indigo-500 rounded"
-                />
-                <span>Aktifkan Kolom Gabungan Standar</span>
-              </label>
-            </div>
-
-            {enableAutoAlias && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
-                {Object.keys(COLUMN_ALIASES).map((stdCol) => (
-                  <div
-                    key={stdCol}
-                    className={`p-3 rounded-xl border space-y-2 ${darkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'}`}
-                  >
-                    <div className="text-[11px] font-bold text-indigo-400">{stdCol}</div>
-                    {uploadedFiles.map((f) => {
-                      const headers = fileHeadersMap[f.id] || [];
-                      const currentVal = aliasMapping[stdCol]?.[f.id] || '';
-                      return (
-                        <div key={f.id} className="flex items-center justify-between gap-2 text-[11px]">
-                          <span className="truncate max-w-[105px] text-slate-400" title={f.fileName}>
-                            {f.fileName}
-                          </span>
-                          <select
-                            value={currentVal}
-                            onChange={(e) => handleManualAliasChange(stdCol, f.id, e.target.value)}
-                            className={`flex-1 text-[11px] rounded-lg border px-2 py-1 ${darkMode ? 'bg-slate-950 border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
-                          >
-                            <option value="">-- Tidak dipetakan --</option>
-                            {headers.map((h) => (
-                              <option key={h} value={h}>{h}</option>
-                            ))}
-                          </select>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Konfigurasi Pivot: Multi-Rows + Multi-Columns + Values */}
-        {mergedFields.length > 0 && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-2 items-start">
-            {/* ROWS: Mendukung > 1 kolom */}
-            <div className="lg:col-span-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-                  ROWS (BISA &gt; 1 KOLOM)
-                </label>
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300">
-                  {rowFields.length} kolom
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                {rowFields.map((rf, idx) => (
-                  <div key={`${rf}-${idx}`} className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-mono font-bold px-2 py-1.5 rounded-lg bg-purple-500/15 text-purple-300 shrink-0">
-                      R{idx + 1}
-                    </span>
-                    <select
-                      value={rf}
-                      onChange={(e) => handleUpdateRowFieldAt(idx, e.target.value)}
-                      className={`flex-1 text-xs rounded-xl border px-2.5 py-2 font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
-                    >
-                      {mergedFields.map((f) => (
-                        <option key={f} value={f}>{f}</option>
-                      ))}
-                    </select>
-                    {rowFields.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveRowFieldAt(idx)}
-                        className="p-2 rounded-xl border border-slate-800 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10"
-                        title="Hapus row ini"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              {remainingRowOptions.length > 0 && (
-                <div className="flex items-center gap-1.5 pt-0.5">
-                  <select
-                    value={extraRowCandidate}
-                    onChange={(e) => setExtraRowCandidate(e.target.value)}
-                    className={`flex-1 text-xs rounded-xl border px-2.5 py-1.5 ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
-                  >
-                    <option value="">+ Pilih kolom Row...</option>
-                    {remainingRowOptions.map((f) => (
-                      <option key={f} value={f}>{f}</option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={handleAddExtraRowField}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition-all shrink-0"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Row</span>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* COLUMNS: Mendukung > 1 kolom */}
-            <div className="lg:col-span-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-                  COLUMNS (BISA &gt; 1 KOLOM)
-                </label>
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300">
-                  {colFields.length} kolom
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                {colFields.map((cf, idx) => (
-                  <div key={`${cf}-${idx}`} className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-mono font-bold px-2 py-1.5 rounded-lg bg-indigo-500/15 text-indigo-300 shrink-0">
-                      C{idx + 1}
-                    </span>
-                    <select
-                      value={cf}
-                      onChange={(e) => handleUpdateColFieldAt(idx, e.target.value)}
-                      className={`flex-1 text-xs rounded-xl border px-2.5 py-2 font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
-                    >
-                      {mergedFields.map((f) => (
-                        <option key={f} value={f}>{f}</option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveColFieldAt(idx)}
-                      className="p-2 rounded-xl border border-slate-800 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10"
-                      title="Hapus column ini"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              {remainingColOptions.length > 0 && (
-                <div className="flex items-center gap-1.5 pt-0.5">
-                  <select
-                    value={extraColCandidate}
-                    onChange={(e) => setExtraColCandidate(e.target.value)}
-                    className={`flex-1 text-xs rounded-xl border px-2.5 py-1.5 ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
-                  >
-                    <option value="">+ Pilih kolom Column...</option>
-                    {remainingColOptions.map((f) => (
-                      <option key={f} value={f}>{f}</option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={handleAddExtraColField}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shrink-0"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Col</span>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* VALUES / AGREGASI & KOLOM ANGKA */}
-            <div className="lg:col-span-4 space-y-3">
-              <div>
-                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5">
-                  VALUES / AGREGASI
-                </label>
                 <select
-                  value={aggType}
-                  onChange={(e) => setAggType(e.target.value)}
-                  className={`w-full text-xs rounded-xl border px-3 py-2 font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
+                  value={rowCandidate}
+                  onChange={(e) => setRowCandidate(e.target.value)}
+                  className={`flex-1 text-xs rounded-xl border px-3 py-2 font-medium ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-300 text-slate-800'}`}
                 >
-                  <option value="COUNT">COUNT (Jumlah Baris)</option>
-                  <option value="SUM">SUM (Total Nilai)</option>
-                  <option value="AVG">AVG (Rata-rata)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5">
-                  KOLOM ANGKA (SUM / AVG)
-                </label>
-                <select
-                  value={valueField}
-                  onChange={(e) => setValueField(e.target.value)}
-                  disabled={aggType === 'COUNT'}
-                  className={`w-full text-xs rounded-xl border px-3 py-2 font-medium disabled:opacity-40 ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
-                >
-                  <option value="">-- Pilih Kolom Numerik --</option>
-                  {mergedFields.map((f) => (
+                  <option value="">-- Pilih kolom baris --</option>
+                  {remainingRowOptions.map((f) => (
                     <option key={f} value={f}>{f}</option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  onClick={handleAddRowViaPlus}
+                  disabled={!rowCandidate && remainingRowOptions.length === 0}
+                  className="flex items-center gap-1 px-3 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white text-xs font-bold shrink-0 transition-all"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Row</span>
+                </button>
               </div>
-            </div>
-          </div>
-        )}
-      </section>
 
-      {/* Toolbar Tampilan Output (Tabel & Grafik dari Data Gabungan) */}
-      {pivotData.rowKeys.length > 0 && (
-        <div className={`p-4 rounded-3xl border shadow-sm flex flex-col lg:flex-row items-center justify-between gap-4 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-          <div className="flex items-center gap-1.5 p-1 rounded-2xl border bg-slate-950/50 border-slate-800">
-            <button
-              onClick={() => setViewMode('BOTH')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
-                viewMode === 'BOTH' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span>Tabel & Grafik</span>
-            </button>
-            <button
-              onClick={() => setViewMode('TABLE')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
-                viewMode === 'TABLE' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <TableProperties className="w-3.5 h-3.5" />
-              <span>Hanya Tabel</span>
-            </button>
-            <button
-              onClick={() => setViewMode('CHART')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
-                viewMode === 'CHART' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <BarChart3 className="w-3.5 h-3.5" />
-              <span>Hanya Grafik</span>
-            </button>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full lg:w-auto">
-            <div className="relative w-full sm:w-56">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-              <input
-                type="text"
-                placeholder={`Filter ${rowLabelHeader}...`}
-                value={searchRow}
-                onChange={(e) => setSearchRow(e.target.value)}
-                className={`w-full text-xs rounded-xl border pl-8 pr-3 py-2 ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
-              />
+              {rowFields.length > 0 ? (
+                <div className="space-y-2 pt-1">
+                  {rowFields.map((rf, idx) => (
+                    <div
+                      key={`${rf}-${idx}`}
+                      className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border text-xs ${darkMode ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-800'}`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-purple-500/15 text-purple-300">
+                          R{idx + 1}
+                        </span>
+                        <span className="font-semibold truncate">{rf}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveRowFieldAt(idx)}
+                        className="p-1 rounded-lg text-slate-400 hover:text-rose-400"
+                        title="Hapus baris"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[11px] text-amber-400 flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>Pilih kolom lalu klik <strong>+ Row</strong> (minimal 1 kolom).</span>
+                </p>
+              )}
             </div>
 
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className={`w-full sm:w-auto text-xs rounded-xl border px-3 py-2 font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
-            >
-              <option value="TOTAL_DESC">Urutkan: Terbesar ke Terkecil</option>
-              <option value="TOTAL_ASC">Urutkan: Terkecil ke Terbesar</option>
-              <option value="LABEL_ASC">Urutkan: Nama (A-Z)</option>
-            </select>
+            {/* COLUMNS — WAJIB MINIMAL 1 VIA + COL */}
+            <div className={`p-4 rounded-2xl border space-y-3 ${darkMode ? 'bg-slate-950/50 border-slate-800' : 'bg-slate-50/70 border-slate-200'}`}>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-indigo-400">
+                  2. Pemecah Kolom (Columns) — Wajib min. 1 via +
+                </label>
+                <span className="text-[10px] font-semibold text-slate-400">{colFields.length} kolom</span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <select
+                  value={colCandidate}
+                  onChange={(e) => setColCandidate(e.target.value)}
+                  className={`flex-1 text-xs rounded-xl border px-3 py-2 font-medium ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-300 text-slate-800'}`}
+                >
+                  <option value="">-- Pilih kolom pemecah --</option>
+                  {remainingColOptions.map((f) => (
+                    <option key={f} value={f}>{f}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={handleAddColViaPlus}
+                  disabled={!colCandidate && remainingColOptions.length === 0}
+                  className="flex items-center gap-1 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-bold shrink-0 transition-all"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Col</span>
+                </button>
+              </div>
+
+              {colFields.length > 0 ? (
+                <div className="space-y-2 pt-1">
+                  {colFields.map((cf, idx) => (
+                    <div
+                      key={`${cf}-${idx}`}
+                      className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border text-xs ${darkMode ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-800'}`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-indigo-500/15 text-indigo-300">
+                          C{idx + 1}
+                        </span>
+                        <span className="font-semibold truncate">{cf}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveColFieldAt(idx)}
+                        className="p-1 rounded-lg text-slate-400 hover:text-rose-400"
+                        title="Hapus kolom"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[11px] text-amber-400 flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>Pilih kolom lalu klik <strong>+ Col</strong> (minimal 1 kolom).</span>
+                </p>
+              )}
+            </div>
           </div>
-        </div>
+
+          <div className="pt-3 border-t border-slate-800/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setCurrentStep(1)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-2xl border border-slate-700 hover:bg-slate-800 text-xs font-semibold self-start"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Kembali ke Step 1</span>
+            </button>
+
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
+              {!canProceedFromStep2 && (
+                <span className="text-[11px] text-amber-400 font-medium">
+                  Tambahkan minimal 1 kolom <strong>+ Row</strong> dan 1 kolom <strong>+ Col</strong> untuk lanjut.
+                </span>
+              )}
+              <button
+                type="button"
+                disabled={!canProceedFromStep2}
+                onClick={() => setCurrentStep(3)}
+                className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs rounded-2xl shadow-sm transition-all"
+              >
+                <span>Lanjut ke Step 3: Cara Hitung</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </section>
       )}
 
-      {/* Tabel Pivot Hasil Penyatuan File (Mendukung Multi-Row & Multi-Column) */}
-      {pivotData.rowKeys.length > 0 && (viewMode === 'BOTH' || viewMode === 'TABLE') && (
-        <section className={`rounded-3xl border shadow-sm overflow-hidden ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-          <div className="px-6 py-4 border-b border-slate-800/70 flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-bold">Pivot Table dari {mergedDataset.length} Baris Data Gabungan</h3>
-              <p className="text-[11px] text-slate-400">
-                Rows: <span className="text-purple-400 font-semibold">{rowLabelHeader}</span>
-                {colLabelHeader && (
-                  <>
-                    {' '}• Columns: <span className="text-indigo-400 font-semibold">{colLabelHeader}</span>
-                  </>
-                )}
-              </p>
-            </div>
-            <span className="text-xs font-mono font-bold text-emerald-400">
-              Grand Total: {formatMetric(pivotData.grandTotal)}
+      {/* STEP 3: PILIH CARA HITUNG */}
+      {currentStep === 3 && mergedFields.length > 0 && canProceedFromStep2 && (
+        <section className={`rounded-3xl border shadow-sm p-6 space-y-5 ${darkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'}`}>
+          <div className="pb-4 border-b border-slate-800/70">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400">
+              STEP 3 DARI 4
             </span>
+            <h3 className="text-base font-bold mt-0.5">Menentukan Jenis Perhitungan Nilai</h3>
           </div>
 
-          <div className="overflow-x-auto max-h-[450px]">
+          {/* PENJELASAN STEP 3 */}
+          <div className={`p-4 rounded-2xl border flex items-start gap-3 text-xs leading-relaxed ${darkMode ? 'bg-amber-950/20 border-amber-500/30 text-slate-300' : 'bg-amber-50/70 border-amber-200 text-slate-700'}`}>
+            <BookOpen className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="font-bold text-amber-300">Penjelasan Step 3:</p>
+              <p>
+                Di tahap ini Anda menentukan bagaimana isi tiap sel pertemuan antara baris dan kolom dihitung. Pilih <strong>COUNT</strong> bila ingin mengetahui jumlah catatan/baris data yang muncul, <strong>SUM</strong> bila ingin menjumlahkan nilai pada kolom angka tertentu, atau <strong>AVG</strong> bila ingin melihat nilai rata-ratanya.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5">
+                Jenis Perhitungan
+              </label>
+              <select
+                value={aggType}
+                onChange={(e) => setAggType(e.target.value)}
+                className={`w-full text-xs rounded-xl border px-3 py-2.5 font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
+              >
+                <option value="COUNT">Hitung Jumlah Data (COUNT)</option>
+                <option value="SUM">Jumlahkan Angka (SUM)</option>
+                <option value="AVG">Rata-rata Angka (AVG)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5">
+                Kolom Angka (Jika SUM / AVG)
+              </label>
+              <select
+                value={valueField}
+                onChange={(e) => setValueField(e.target.value)}
+                disabled={aggType === 'COUNT'}
+                className={`w-full text-xs rounded-xl border px-3 py-2.5 font-medium disabled:opacity-40 ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
+              >
+                <option value="">-- Pilih Kolom Angka --</option>
+                {mergedFields.map((f) => (
+                  <option key={f} value={f}>{f}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-slate-800/70 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setCurrentStep(2)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-2xl border border-slate-700 hover:bg-slate-800 text-xs font-semibold"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Kembali ke Step 2</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={!hasMetric}
+              onClick={() => setCurrentStep(4)}
+              className="flex items-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold text-xs rounded-2xl shadow-sm transition-all"
+            >
+              <span>Lanjut ke Step 4: Lihat Tabel Pivot</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* STEP 4: HASIL TABEL PIVOT & EKSPOR */}
+      {currentStep === 4 && pivotData.rowKeys.length > 0 && canProceedFromStep2 && (
+        <section className={`rounded-3xl border shadow-sm overflow-hidden ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+          <div className="px-6 py-4 border-b border-slate-800/70 space-y-3">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">
+                  STEP 4 DARI 4 • HASIL TABEL PIVOT
+                </span>
+                <h3 className="text-sm font-bold mt-0.5">Ringkasan Pivot ({rowLabelHeader})</h3>
+                <span className="text-xs font-mono font-bold text-emerald-400 block mt-0.5">
+                  Grand Total: {formatMetric(pivotData.grandTotal)}
+                </span>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+                <div className="relative w-full sm:w-52">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Cari baris..."
+                    value={searchRow}
+                    onChange={(e) => setSearchRow(e.target.value)}
+                    className={`w-full text-xs rounded-xl border pl-8 pr-3 py-2 ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
+                  />
+                </div>
+
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  className={`text-xs rounded-xl border px-3 py-2 font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
+                >
+                  <option value="TOTAL_DESC">Terbesar ke Terkecil</option>
+                  <option value="TOTAL_ASC">Terkecil ke Terbesar</option>
+                  <option value="LABEL_ASC">Urut Nama (A-Z)</option>
+                </select>
+
+                <button
+                  type="button"
+                  onClick={exportPivotAndMergedToExcel}
+                  className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-2xl shadow-sm transition-all"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Ekspor Excel (.xlsx)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* PENJELASAN STEP 4 */}
+            <div className={`p-3.5 rounded-2xl border flex items-start gap-3 text-xs leading-relaxed ${darkMode ? 'bg-emerald-950/20 border-emerald-500/30 text-slate-300' : 'bg-emerald-50/70 border-emerald-200 text-slate-700'}`}>
+              <BookOpen className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <p>
+                <strong>Penjelasan Step 4:</strong> Tabel di bawah menampilkan rekapitulasi akhir berdasarkan baris, kolom silang, dan metode hitung yang telah dipilih, lengkap dengan <strong>Grand Total</strong> di bagian bawah. Anda dapat menyaring atau mengurutkan baris secara langsung, lalu mengekspor hasilnya ke file <strong>.xlsx</strong> yang memuat sheet <em>Ringkasan_Pivot</em> dan <em>Data_Gabungan</em>.
+              </p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto max-h-[480px]">
             <table className="w-full text-left text-xs border-collapse">
               <thead className={`uppercase font-bold tracking-wider sticky top-0 z-10 border-b ${darkMode ? 'bg-slate-950 text-slate-300 border-slate-800' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>
                 <tr>
                   {rowFields.map((rf) => (
                     <th key={rf} className="p-3.5">{rf}</th>
                   ))}
-                  {rowFields.length > 1 && <th className="p-3.5">Kombinasi Row</th>}
                   {pivotData.colKeys.map((cKey) => (
                     <th key={cKey} className="p-3.5 text-right">{cKey}</th>
                   ))}
-                  {colFields.length > 0 && <th className="p-3.5 text-right">Total Baris</th>}
+                  {pivotData.colKeys.length > 1 && (
+                    <th className="p-3.5 text-right">Total Baris</th>
+                  )}
                 </tr>
               </thead>
               <tbody className={`divide-y ${darkMode ? 'divide-slate-800/80' : 'divide-slate-100'}`}>
@@ -949,15 +1063,12 @@ export default function PivotModule({ darkMode }) {
                           {parts[idx] ?? ''}
                         </td>
                       ))}
-                      {rowFields.length > 1 && (
-                        <td className="p-3.5 font-semibold font-mono text-purple-400">{rKey}</td>
-                      )}
                       {pivotData.colKeys.map((cKey) => (
                         <td key={cKey} className="p-3.5 text-right font-mono">
                           {formatMetric(pivotData.matrix[rKey][cKey])}
                         </td>
                       ))}
-                      {colFields.length > 0 && (
+                      {pivotData.colKeys.length > 1 && (
                         <td className="p-3.5 text-right font-mono font-bold text-indigo-400">
                           {formatMetric(pivotData.rowTotals[rKey])}
                         </td>
@@ -966,9 +1077,9 @@ export default function PivotModule({ darkMode }) {
                   );
                 })}
               </tbody>
-              <tfoot className={`font-bold border-t-2 ${darkMode ? 'bg-slate-950 text-slate-100 border-slate-700' : 'bg-slate-100 text-slate-900 border-slate-300'}`}>
+              <tfoot className={`font-bold border-t-2 sticky bottom-0 z-10 ${darkMode ? 'bg-slate-950 text-slate-100 border-slate-700' : 'bg-slate-100 text-slate-900 border-slate-300'}`}>
                 <tr>
-                  <td colSpan={rowFields.length > 1 ? rowFields.length + 1 : rowFields.length} className="p-3.5">
+                  <td colSpan={rowFields.length} className="p-3.5">
                     Grand Total
                   </td>
                   {pivotData.colKeys.map((cKey) => (
@@ -976,7 +1087,7 @@ export default function PivotModule({ darkMode }) {
                       {formatMetric(pivotData.colTotals[cKey])}
                     </td>
                   ))}
-                  {colFields.length > 0 && (
+                  {pivotData.colKeys.length > 1 && (
                     <td className="p-3.5 text-right font-mono text-emerald-400">
                       {formatMetric(pivotData.grandTotal)}
                     </td>
@@ -985,92 +1096,24 @@ export default function PivotModule({ darkMode }) {
               </tfoot>
             </table>
           </div>
-        </section>
-      )}
 
-      {/* Grafik Evaluasi Atasan */}
-      {pivotData.rowKeys.length > 0 && (viewMode === 'BOTH' || viewMode === 'CHART') && (
-        <section className={`rounded-3xl border shadow-sm p-6 space-y-4 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/70">
-            <div>
-              <h3 className="text-sm font-bold flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 text-indigo-400" />
-                Grafik Visualisasi Evaluasi per {rowLabelHeader}
-              </h3>
-              <p className="text-[11px] text-slate-400">
-                Dihitung dari gabungan {uploadedFiles.length} file ({aggType}{aggType !== 'COUNT' && valueField ? ` dari ${valueField}` : ''}).
-              </p>
-            </div>
+          <div className="px-6 py-4 border-t border-slate-800/70 flex items-center justify-between">
             <button
-              onClick={downloadChartPng}
-              className="px-3.5 py-2 rounded-xl border border-slate-700 hover:bg-slate-800 text-xs font-semibold flex items-center gap-1.5 self-start sm:self-auto"
+              type="button"
+              onClick={() => setCurrentStep(3)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-2xl border border-slate-700 hover:bg-slate-800 text-xs font-semibold"
             >
-              <Download className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Simpan Grafik (.png)</span>
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Ubah Cara Hitung (Step 3)</span>
             </button>
-          </div>
 
-          <div className="space-y-3 max-h-[460px] overflow-y-auto pr-1">
-            {pivotData.rowKeys.map((rKey, idx) => {
-              const displayTotal = colFields.length > 0
-                ? Number(pivotData.rowTotals[rKey] || 0)
-                : Number(pivotData.matrix[rKey]?.['Nilai'] || 0);
-              const pct = Math.min(100, Math.round((displayTotal / maxBarValue) * 100));
-              const barColor = chartPalette[idx % chartPalette.length];
-
-              return (
-                <div key={rKey} className="space-y-1">
-                  <div className="flex items-center justify-between text-xs gap-3">
-                    <span className="font-mono font-semibold truncate max-w-[65%]">{rKey}</span>
-                    <span className="font-mono font-bold text-slate-300">{formatMetric(displayTotal)}</span>
-                  </div>
-                  <div className={`w-full h-3 rounded-full overflow-hidden ${darkMode ? 'bg-slate-950' : 'bg-slate-100'}`}>
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{ width: `${pct}%`, backgroundColor: barColor }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="hidden">
-            <svg
-              ref={chartSvgRef}
-              width="900"
-              height={Math.max(260, pivotData.rowKeys.length * 42 + 80)}
-              xmlns="http://www.w3.org/2000/svg"
+            <button
+              type="button"
+              onClick={() => setCurrentStep(2)}
+              className="px-4 py-2 rounded-2xl border border-slate-700 hover:bg-slate-800 text-xs font-semibold text-purple-300"
             >
-              <text x="30" y="36" fill={darkMode ? '#f8fafc' : '#0f172a'} fontSize="18" fontWeight="bold">
-                Grafik Evaluasi Pivot Gabungan: {rowLabelHeader} ({aggType})
-              </text>
-              {pivotData.rowKeys.map((rKey, idx) => {
-                const val = colFields.length > 0
-                  ? Number(pivotData.rowTotals[rKey] || 0)
-                  : Number(pivotData.matrix[rKey]?.['Nilai'] || 0);
-                const barWidth = Math.max(4, Math.round((val / maxBarValue) * 520));
-                const y = 65 + idx * 40;
-                return (
-                  <g key={rKey}>
-                    <text x="30" y={y + 16} fill={darkMode ? '#cbd5e1' : '#334155'} fontSize="13">
-                      {String(rKey).slice(0, 32)}
-                    </text>
-                    <rect
-                      x="260"
-                      y={y}
-                      width={barWidth}
-                      height="22"
-                      rx="6"
-                      fill={chartPalette[idx % chartPalette.length]}
-                    />
-                    <text x={270 + barWidth} y={y + 16} fill={darkMode ? '#e2e8f0' : '#0f172a'} fontSize="13" fontWeight="bold">
-                      {formatMetric(val)}
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
+              Ubah Baris / Kolom (Step 2)
+            </button>
           </div>
         </section>
       )}

@@ -81,7 +81,7 @@ export default function Header({ appMode, setAppMode, darkMode, setDarkMode }) {
       {/* Modal Instruksi / Cara Penggunaan */}
       {showInstructionsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
-          <div className={`max-w-xl w-full rounded-3xl border p-6 shadow-2xl space-y-5 ${darkMode ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
+          <div className={`max-w-2xl w-full max-h-[85vh] overflow-y-auto rounded-3xl border p-6 shadow-2xl space-y-5 ${darkMode ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
             <div className="flex items-center justify-between pb-3 border-b border-slate-700/50">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-xl">
@@ -98,22 +98,43 @@ export default function Header({ appMode, setAppMode, darkMode, setDarkMode }) {
             </div>
 
             <div className="space-y-3.5 text-xs leading-relaxed text-slate-300">
-              <div className="p-3.5 rounded-2xl bg-slate-950/50 border border-slate-800 space-y-1">
+              <div className="p-3.5 rounded-2xl bg-slate-950/50 border border-slate-800 space-y-1.5">
                 <div className="flex items-center gap-2 font-bold text-blue-400">
-                  <CheckCircle2 className="w-4 h-4" /> 1. Mode Excel & CSV (Data Reconciliation)
+                  <CheckCircle2 className="w-4 h-4" /> 1. Mode Excel & CSV — Komparasi File
                 </div>
                 <ul className="list-disc list-inside space-y-1 pl-1 text-slate-400">
-                  <li><strong>Unggah Dokumen:</strong> Masukkan File Lama (Referensi) dan File Baru (Pembanding).</li>
-                  <li><strong>Pencocokan Baris:</strong> Sistem mendeteksi baris Identik, Perubahan Data, Data Baru, dan Data Dihapus berdasarkan *Primary Key*.</li>
+                  <li><strong>Unggah 2 Dokumen:</strong> Masukkan File 1 (Referensi/Lama) dan File 2 (Pembanding/Baru), lalu pilih lembar <em>sheet</em>.</li>
+                  <li><strong>Pencocokan Baris:</strong> Pilih <em>Primary Key</em> utama untuk mendeteksi baris Identik, Beda (<em>Modified</em>), Baru (<em>Added</em>), dan Dihapus (<em>Deleted</em>), lalu ekspor hasilnya ke Excel (`.xlsx`).</li>
+                </ul>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-slate-950/50 border border-slate-800 space-y-1.5">
+                <div className="flex items-center gap-2 font-bold text-emerald-400">
+                  <CheckCircle2 className="w-4 h-4" /> 2. Mode Excel & CSV — Kalkulasi Rumus
+                </div>
+                <ul className="list-disc list-inside space-y-1 pl-1 text-slate-400">
+                  <li><strong>Susun Formula:</strong> Aktifkan kalkulasi, pilih kolom target hasil, dan tulis rumus menggunakan tanda kurung siku seperti <code className="text-emerald-300">[Gaji_Pokok] + [Tunjangan]</code>.</li>
+                  <li><strong>Ekspor Hasil:</strong> Unduh tabel hasil perhitungan langsung ke format Excel (`.xlsx`).</li>
+                </ul>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-slate-950/50 border border-slate-800 space-y-1.5">
+                <div className="flex items-center gap-2 font-bold text-purple-400">
+                  <CheckCircle2 className="w-4 h-4" /> 3. Mode Excel & CSV — Pivot Table & Grafik Evaluasi
+                </div>
+                <ul className="list-disc list-inside space-y-1 pl-1 text-slate-400">
+                  <li><strong>Penyatuan Otomatis Multi-File:</strong> Unggah satu atau beberapa file Excel/CSV (meski format kolomnya berbeda). Sistem menyatukannya menjadi 1 data gabungan dan menyediakan tombol <strong>Unduh Gabungan</strong> (`.xlsx`).</li>
+                  <li><strong>Multi-Row, Multi-Column & Agregasi:</strong> Pilih satu atau lebih kolom di <strong>ROWS</strong> dan <strong>COLUMNS</strong>, lalu atur agregasi (`COUNT`, `SUM`, `AVG`).</li>
+                  <li><strong>Penyajian Evaluasi & Ekspor:</strong> Tampilkan dalam bentuk <strong>Tabel</strong>, <strong>Grafik</strong> (bisa disimpan sebagai `.png`), atau keduanya, serta ekspor hasil Pivot ke Excel (`.xlsx`).</li>
                 </ul>
               </div>
 
               <div className="p-3.5 rounded-2xl bg-slate-950/50 border border-slate-800 space-y-1">
                 <div className="flex items-center gap-2 font-bold text-indigo-400">
-                  <CheckCircle2 className="w-4 h-4" /> 2. Mode Review Word (.docx) & Unduh Laporan
+                  <CheckCircle2 className="w-4 h-4" /> 4. Mode Review Word (.docx)
                 </div>
                 <p className="text-slate-400">
-                  Unggah dua dokumen Word untuk membandingkan perbedaan teks secara langsung. Hasil perbandingan dapat diunduh dalam bentuk laporan teks (.txt).
+                  Unggah dua dokumen Word (`.docx`) untuk membandingkan perbedaan teks secara langsung dan mengunduh laporannya dalam format teks (`.txt`).
                 </p>
               </div>
             </div>
