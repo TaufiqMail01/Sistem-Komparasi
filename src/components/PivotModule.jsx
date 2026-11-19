@@ -5,7 +5,6 @@ import {
   Download,
   Upload,
   FileSpreadsheet,
-  Search,
   Trash2,
   Layers,
   Plus,
@@ -16,16 +15,34 @@ import {
   ArrowLeft,
   CheckCircle2,
   AlertCircle,
-  BookOpen
+  BookOpen,
+  Type,
+  Check,
+  Info
 } from 'lucide-react';
 import { readFileData, formatCellValue, parseIndonesianNumber } from '../utils/fileHelpers';
 
 const COLUMN_ALIASES = {
-  'ID / Kode': ['id', 'kode', 'kode barang', 'nik', 'nip', 'nrk', 'no', 'nomor'],
-  'Nama / Item': ['nama', 'nama barang', 'item', 'barang', 'produk', 'uraian', 'deskripsi'],
-  'Kategori / Divisi': ['kategori', 'divisi', 'departemen', 'bagian', 'unit', 'cabang', 'klien', 'client', 'status'],
-  'Jumlah / Qty': ['jumlah', 'qty', 'quantity', 'kuantitas', 'total unit', 'volume'],
-  'Nilai / Nominal': ['nilai', 'nominal', 'harga', 'subtotal', 'total', 'amount', 'gaji', 'biaya']
+  'ID / Kode': {
+    hint: 'Menyatukan kolom kode unik/identitas (misal: NIK, Kode Barang, No)',
+    keywords: ['id', 'kode', 'kode barang', 'nik', 'nip', 'nrk', 'no', 'nomor']
+  },
+  'Nama / Item': {
+    hint: 'Menyatukan kolom nama orang, barang, item, atau uraian',
+    keywords: ['nama', 'nama barang', 'item', 'barang', 'produk', 'uraian', 'deskripsi']
+  },
+  'Kategori / Divisi': {
+    hint: 'Menyatukan kolom pengelompokan seperti Divisi, Cabang, Client, atau Status',
+    keywords: ['kategori', 'divisi', 'departemen', 'bagian', 'unit', 'cabang', 'klien', 'client', 'status']
+  },
+  'Jumlah / Qty': {
+    hint: 'Menyatukan kolom kuantitas/jumlah unit (misal: Qty, Jumlah, Volume)',
+    keywords: ['jumlah', 'qty', 'quantity', 'kuantitas', 'total unit', 'volume']
+  },
+  'Nilai / Nominal': {
+    hint: 'Menyatukan kolom angka nilai/rupiah (misal: Total, Nominal, Harga, Biaya)',
+    keywords: ['nilai', 'nominal', 'harga', 'subtotal', 'total', 'amount', 'gaji', 'biaya']
+  }
 };
 
 export default function PivotModule({ darkMode }) {
@@ -33,6 +50,10 @@ export default function PivotModule({ darkMode }) {
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [aliasMapping, setAliasMapping] = useState({});
   const [showColumnMapper, setShowColumnMapper] = useState(false);
+
+  // Aturan Pemrosesan Teks & Toleransi
+  const [ignoreCase, setIgnoreCase] = useState(true);
+  const [ignoreExtraSpaces, setIgnoreExtraSpaces] = useState(true);
 
   // Masing-masing Row dan Column wajib ditambahkan minimal 1 kolom via tombol +
   const [rowFields, setRowFields] = useState([]);
@@ -45,8 +66,23 @@ export default function PivotModule({ darkMode }) {
 
   const [valueField, setValueField] = useState('');
   const [aggType, setAggType] = useState('COUNT'); // 'COUNT' | 'SUM' | 'AVG'
-  const [searchRow, setSearchRow] = useState('');
   const [sortBy, setSortBy] = useState('TOTAL_DESC');
+
+  // Helper pemrosesan teks pada isi data sesuai toggle toleransi
+  const normalizeText = (val) => {
+    if (val === null || val === undefined) return '';
+    let str = String(val);
+
+    if (ignoreExtraSpaces) {
+      str = str.trim().replace(/\s+/g, ' ');
+    }
+
+    if (ignoreCase) {
+      str = str.toUpperCase();
+    }
+
+    return str;
+  };
 
   const handleAddFiles = async (fileList) => {
     const filesArray = Array.from(fileList || []);
@@ -99,7 +135,6 @@ export default function PivotModule({ darkMode }) {
     setColCandidate('');
     setHasAddedColViaPlus(false);
     setValueField('');
-    setSearchRow('');
     setCurrentStep(1);
   };
 
@@ -125,14 +160,14 @@ export default function PivotModule({ darkMode }) {
     setAliasMapping((prev) => {
       const next = { ...prev };
       Object.keys(COLUMN_ALIASES).forEach((stdCol) => {
-        const keywords = COLUMN_ALIASES[stdCol];
+        const keywords = COLUMN_ALIASES[stdCol].keywords;
         next[stdCol] = next[stdCol] || {};
 
         uploadedFiles.forEach((f) => {
           if (next[stdCol][f.id]) return;
           const headers = fileHeadersMap[f.id] || [];
           const matched = headers.find((h) => {
-            const lh = h.toLowerCase().trim();
+            const lh = h.toLowerCase().trim().replace(/\s+/g, ' ');
             return keywords.some((kw) => lh === kw || lh.includes(kw));
           });
           if (matched) next[stdCol][f.id] = matched;
@@ -172,13 +207,17 @@ export default function PivotModule({ darkMode }) {
         };
 
         Object.keys(raw || {}).forEach((k) => {
-          if (!k.startsWith('__EMPTY')) cleanRow[k] = raw[k];
+          if (!k.startsWith('__EMPTY')) {
+            const v = raw[k];
+            cleanRow[k] = typeof v === 'number' && !Number.isNaN(v) ? v : normalizeText(v);
+          }
         });
 
         activeStandardCols.forEach((stdCol) => {
           const mappedCol = aliasMapping[stdCol]?.[f.id];
-          if (mappedCol) {
-            cleanRow[stdCol] = raw[mappedCol] ?? '';
+          if (mappedCol && mappedCol in raw) {
+            const v = raw[mappedCol];
+            cleanRow[stdCol] = typeof v === 'number' && !Number.isNaN(v) ? v : normalizeText(v);
           } else if (!(stdCol in cleanRow)) {
             cleanRow[stdCol] = '';
           }
@@ -189,7 +228,7 @@ export default function PivotModule({ darkMode }) {
     });
 
     return combined;
-  }, [uploadedFiles, aliasMapping]);
+  }, [uploadedFiles, aliasMapping, ignoreCase, ignoreExtraSpaces]);
 
   const mergedFields = useMemo(() => {
     if (!mergedDataset.length) return [];
@@ -306,22 +345,19 @@ export default function PivotModule({ darkMode }) {
     const colSet = new Set();
 
     mergedDataset.forEach((row) => {
-      const rParts = rowFields.map((f) => String(row[f] ?? '').trim() || '(Kosong)');
+      const rParts = rowFields.map((f) => normalizeText(row[f]) || '(Kosong)');
       const rKey = rParts.join(' › ');
-
-      if (searchRow.trim() && !rKey.toLowerCase().includes(searchRow.trim().toLowerCase())) {
-        return;
-      }
 
       rowPartsMap[rKey] = rParts;
 
-      const cKey = colFields.map((f) => String(row[f] ?? '').trim() || '(Kosong)').join(' › ');
+      const cKey = colFields.map((f) => normalizeText(row[f]) || '(Kosong)').join(' › ');
       colSet.add(cKey);
 
       let val = 1;
       if (aggType !== 'COUNT') {
-        const parsed = valueField ? parseIndonesianNumber(row[valueField]) : NaN;
-        val = isNaN(parsed) ? 0 : parsed;
+        const rawNum =
+          typeof row[valueField] === 'number' ? row[valueField] : parseIndonesianNumber(row[valueField]);
+        val = Number.isNaN(rawNum) ? 0 : rawNum;
       }
 
       if (!rowMap.has(rKey)) rowMap.set(rKey, new Map());
@@ -384,17 +420,27 @@ export default function PivotModule({ darkMode }) {
     const grandTotal = aggregate(grandBucket);
 
     return { rowKeys, rowPartsMap, colKeys, matrix, rowTotals, colTotals, grandTotal };
-  }, [mergedDataset, rowFields, colFields, valueField, aggType, searchRow, sortBy]);
+  }, [mergedDataset, rowFields, colFields, valueField, aggType, sortBy, ignoreCase, ignoreExtraSpaces]);
 
   const formatMetric = (val) => {
     if (aggType === 'COUNT') return Number(val || 0).toLocaleString('id-ID');
     return formatCellValue(valueField || 'Nilai', val);
   };
 
+  const cleanExportDataRows = (rows) =>
+    rows.map((r) => {
+      const out = {};
+      Object.keys(r || {}).forEach((k) => {
+        const v = r[k];
+        out[k] = typeof v === 'number' && !Number.isNaN(v) ? v : normalizeText(v);
+      });
+      return out;
+    });
+
   const exportMergedOnlyToExcel = () => {
     if (!mergedDataset.length) return;
     const wb = XLSX.utils.book_new();
-    const wsMerged = XLSX.utils.json_to_sheet(mergedDataset);
+    const wsMerged = XLSX.utils.json_to_sheet(cleanExportDataRows(mergedDataset));
     XLSX.utils.book_append_sheet(wb, wsMerged, 'Data_Gabungan');
     XLSX.writeFile(wb, `Gabungan_Excel_${uploadedFiles.length}_File.xlsx`);
   };
@@ -413,7 +459,7 @@ export default function PivotModule({ darkMode }) {
       const obj = {};
 
       rowFields.forEach((rf, idx) => {
-        obj[rf] = rParts[idx] ?? '';
+        obj[rf] = normalizeText(rParts[idx] ?? '');
       });
 
       pivotData.colKeys.forEach((cKey) => {
@@ -486,7 +532,7 @@ export default function PivotModule({ darkMode }) {
 
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, wsPivot, 'Ringkasan_Pivot');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(mergedDataset), 'Data_Gabungan');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(cleanExportDataRows(mergedDataset)), 'Data_Gabungan');
 
     XLSX.writeFile(wb, `Pivot_${rowLabelHeader.replace(/[^a-zA-Z0-9_-]/g, '_')}.xlsx`);
   };
@@ -588,8 +634,60 @@ export default function PivotModule({ darkMode }) {
             <div className="space-y-1">
               <p className="font-bold text-purple-300">Penjelasan Step 1:</p>
               <p>
-                Tahap ini berfungsi membaca isi file spreadsheet (.xlsx, .xls, atau .csv) langsung di browser Anda tanpa menyimpannya ke database. Jika Anda mengunggah lebih dari satu file, seluruh baris dari sheet terpilih akan otomatis digabung menjadi satu dataset utuh. Bila ada nama kolom yang berbeda antar file, Anda juga bisa menyamakannya lewat menu penyesuaian kolom.
+                Tahap ini membaca file spreadsheet (.xlsx, .xls, atau .csv) langsung di browser tanpa menyimpannya ke database. Gunakan opsi toleransi teks di bawah untuk menyatukan penulisan huruf kapital dan merapikan spasi berlebih tanpa menghapus spasi antar kata.
               </p>
+            </div>
+          </div>
+
+          {/* ATURAN PEMROSESAN TEKS & TOLERANSI (BERSEBELAHAN) */}
+          <div className="space-y-2.5">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-300">
+              <Type className="w-4 h-4 text-indigo-400" />
+              <span>Aturan Pemrosesan Teks & Toleransi:</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setIgnoreCase((prev) => !prev)}
+                className={`w-full px-4 py-3 rounded-2xl border text-left flex items-center gap-3 transition-all ${
+                  darkMode
+                    ? 'bg-slate-950/70 border-slate-800 hover:border-slate-700 text-slate-100'
+                    : 'bg-slate-50 border-slate-200 hover:border-slate-300 text-slate-800'
+                }`}
+              >
+                <span
+                  className={`w-4 h-4 rounded flex items-center justify-center border shrink-0 transition-colors ${
+                    ignoreCase
+                      ? 'bg-indigo-600 border-indigo-600 text-white'
+                      : 'border-slate-500 bg-transparent'
+                  }`}
+                >
+                  {ignoreCase && <Check className="w-3 h-3 stroke-[3]" />}
+                </span>
+                <span className="text-xs font-semibold">Abaikan Kapitalisasi Huruf</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIgnoreExtraSpaces((prev) => !prev)}
+                className={`w-full px-4 py-3 rounded-2xl border text-left flex items-center gap-3 transition-all ${
+                  darkMode
+                    ? 'bg-slate-950/70 border-slate-800 hover:border-slate-700 text-slate-100'
+                    : 'bg-slate-50 border-slate-200 hover:border-slate-300 text-slate-800'
+                }`}
+              >
+                <span
+                  className={`w-4 h-4 rounded flex items-center justify-center border shrink-0 transition-colors ${
+                    ignoreExtraSpaces
+                      ? 'bg-indigo-600 border-indigo-600 text-white'
+                      : 'border-slate-500 bg-transparent'
+                  }`}
+                >
+                  {ignoreExtraSpaces && <Check className="w-3 h-3 stroke-[3]" />}
+                </span>
+                <span className="text-xs font-semibold">Abaikan Spasi Berlebih</span>
+              </button>
             </div>
           </div>
 
@@ -662,6 +760,7 @@ export default function PivotModule({ darkMode }) {
             </div>
           )}
 
+          {/* PENYESUAIAN KOLOM BEDA NAMA ANTAR FILE (DIPERJELAS FUNGSINYA) */}
           {uploadedFiles.length >= 2 && (
             <div className="pt-1">
               <button
@@ -675,36 +774,62 @@ export default function PivotModule({ darkMode }) {
               </button>
 
               {showColumnMapper && (
-                <div className={`mt-3 p-4 rounded-2xl border grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 ${darkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-indigo-50/40 border-indigo-200'}`}>
-                  {Object.keys(COLUMN_ALIASES).map((stdCol) => (
-                    <div
-                      key={stdCol}
-                      className={`p-3 rounded-xl border space-y-2 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}
-                    >
-                      <div className="text-[11px] font-bold text-indigo-400">{stdCol}</div>
-                      {uploadedFiles.map((f) => {
-                        const headers = fileHeadersMap[f.id] || [];
-                        const currentVal = aliasMapping[stdCol]?.[f.id] || '';
-                        return (
-                          <div key={f.id} className="flex items-center justify-between gap-2 text-[11px]">
-                            <span className="truncate max-w-[100px] text-slate-400" title={f.fileName}>
-                              {f.fileName}
-                            </span>
-                            <select
-                              value={currentVal}
-                              onChange={(e) => handleManualAliasChange(stdCol, f.id, e.target.value)}
-                              className={`flex-1 text-[11px] rounded-lg border px-2 py-1 ${darkMode ? 'bg-slate-950 border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
-                            >
-                              <option value="">-- Otomatis --</option>
-                              {headers.map((h) => (
-                                <option key={h} value={h}>{h}</option>
-                              ))}
-                            </select>
-                          </div>
-                        );
-                      })}
+                <div className={`mt-3 p-4 rounded-2xl border space-y-4 ${darkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-indigo-50/40 border-indigo-200'}`}>
+                  {/* Kotak penjelasan fungsi yang diperjelas */}
+                  <div className={`p-3.5 rounded-xl border flex items-start gap-2.5 text-xs leading-relaxed ${darkMode ? 'bg-indigo-950/30 border-indigo-500/30 text-slate-300' : 'bg-white border-indigo-200 text-slate-700'}`}>
+                    <Info className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-bold text-indigo-300">
+                        Fungsi Fitur: Menyatukan Kolom Berbeda Nama Menjadi Satu Kolom Acuan
+                      </p>
+                      <p>
+                        Jika file yang diunggah memiliki nama header berbeda untuk maksud data yang sama (misalnya di File 1 tertulis <strong>Divisi</strong> dan di File 2 tertulis <strong>Bagian</strong>), pilih nama kolom dari tiap file pada kelompok acuan di bawah. Sistem sudah mendeteksi otomatis, dan Anda bisa mengubahnya manual bila ada yang belum tepat.
+                      </p>
                     </div>
-                  ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {Object.entries(COLUMN_ALIASES).map(([stdCol, cfg]) => (
+                      <div
+                        key={stdCol}
+                        className={`p-3.5 rounded-xl border space-y-2.5 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}
+                      >
+                        <div>
+                          <div className="text-xs font-bold text-indigo-400">Kelompok: {stdCol}</div>
+                          <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">{cfg.hint}</p>
+                        </div>
+
+                        <div className="space-y-2 pt-1 border-t border-slate-800/60">
+                          {uploadedFiles.map((f) => {
+                            const headers = fileHeadersMap[f.id] || [];
+                            const currentVal = aliasMapping[stdCol]?.[f.id] || '';
+                            return (
+                              <div key={f.id} className="space-y-1 text-[11px]">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="truncate font-medium text-slate-300" title={f.fileName}>
+                                    File: {f.fileName}
+                                  </span>
+                                  <span className="text-[10px] text-emerald-400 shrink-0">
+                                    {currentVal ? 'Terhubung' : 'Otomatis'}
+                                  </span>
+                                </div>
+                                <select
+                                  value={currentVal}
+                                  onChange={(e) => handleManualAliasChange(stdCol, f.id, e.target.value)}
+                                  className={`w-full text-[11px] rounded-lg border px-2.5 py-1.5 ${darkMode ? 'bg-slate-950 border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
+                                >
+                                  <option value="">-- Deteksi Otomatis --</option>
+                                  {headers.map((h) => (
+                                    <option key={h} value={h}>{h}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -740,7 +865,7 @@ export default function PivotModule({ darkMode }) {
             <div className="space-y-1">
               <p className="font-bold text-indigo-300">Penjelasan Step 2:</p>
               <p>
-                Pada tabel pivot, <strong>Rows</strong> menentukan kategori yang disusun ke bawah sebagai baris, sedangkan <strong>Columns</strong> menentukan kategori yang disebarkan ke samping sebagai kolom silang. Agar struktur tabel terbentuk jelas, masing-masing <strong>Rows</strong> dan <strong>Columns</strong> wajib ditambahkan minimal satu kolom dengan memilih kolomnya lalu menekan tombol <strong>+</strong>.
+                Pada tabel pivot, <strong>Rows</strong> menentukan kategori yang disusun ke bawah sebagai baris, sedangkan <strong>Columns</strong> menentukan kategori yang disebarkan ke samping sebagai kolom silang. Masing-masing <strong>Rows</strong> dan <strong>Columns</strong> wajib ditambahkan minimal satu kolom dengan memilih kolomnya lalu menekan tombol <strong>+</strong> sebelum lanjut ke Step 3.
               </p>
             </div>
           </div>
@@ -997,17 +1122,6 @@ export default function PivotModule({ darkMode }) {
               </div>
 
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
-                <div className="relative w-full sm:w-52">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-                  <input
-                    type="text"
-                    placeholder="Cari baris..."
-                    value={searchRow}
-                    onChange={(e) => setSearchRow(e.target.value)}
-                    className={`w-full text-xs rounded-xl border pl-8 pr-3 py-2 ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-100' : 'bg-slate-50 border-slate-300 text-slate-800'}`}
-                  />
-                </div>
-
                 <select
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value)}
@@ -1033,7 +1147,7 @@ export default function PivotModule({ darkMode }) {
             <div className={`p-3.5 rounded-2xl border flex items-start gap-3 text-xs leading-relaxed ${darkMode ? 'bg-emerald-950/20 border-emerald-500/30 text-slate-300' : 'bg-emerald-50/70 border-emerald-200 text-slate-700'}`}>
               <BookOpen className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
               <p>
-                <strong>Penjelasan Step 4:</strong> Tabel di bawah menampilkan rekapitulasi akhir berdasarkan baris, kolom silang, dan metode hitung yang telah dipilih, lengkap dengan <strong>Grand Total</strong> di bagian bawah. Anda dapat menyaring atau mengurutkan baris secara langsung, lalu mengekspor hasilnya ke file <strong>.xlsx</strong> yang memuat sheet <em>Ringkasan_Pivot</em> dan <em>Data_Gabungan</em>.
+                <strong>Penjelasan Step 4:</strong> Tabel di bawah menampilkan rekapitulasi akhir berdasarkan baris, kolom silang, dan metode hitung yang telah dipilih, lengkap dengan <strong>Grand Total</strong> di bagian bawah. Anda dapat mengubah urutan baris secara langsung, lalu mengekspor hasilnya ke file <strong>.xlsx</strong> yang memuat sheet <em>Ringkasan_Pivot</em> dan <em>Data_Gabungan</em>.
               </p>
             </div>
           </div>
